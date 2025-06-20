@@ -1,0 +1,17 @@
+# API Reference
+
+Base URL: `https://<your-domain>/api`
+
+| Endpoint                | Method | Description                                  |
+|-------------------------|--------|----------------------------------------------|
+| `/auth/login`           | POST   | User authentication → returns JWT cookie     |
+| `/auth/logout`          | POST   | Clears session cookie                        |
+| `/quiz/:moduleId`       | POST   | Generate quiz questions for a given module   |
+| `/quiz/:quizId/submit`  | POST   | Submit answers, returns score & feedback     |
+| `/chat`                 | POST   | SSE chat assistant (streaming responses)     |
+| `/analytics/time`       | POST   | Log time-on-task event                       |
+
+## Request / Response Schemas
+### `/quiz/:moduleId` request
+```json
+{ "moduleId": "string", "numQuestions": 5 }
