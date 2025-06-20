@@ -1,0 +1,28 @@
+# System Architecture
+
+## 1. Overview
+- High-level description of components and their responsibilities
+- ASCII/SVG diagram showing client, server, vector DB, LLM, analytics
+
+## 2. Component Breakdown
+### 2.1 Frontend (React SPA)
+- Folder: `client/src`
+- Key libraries: Vite, TypeScript, Shadcn/ui, Tailwind
+
+### 2.2 Backend (Node.js API)
+- Folder: `server/api`
+- Express routes, middleware, SSE chat endpoint
+
+### 2.3 Data Stores
+- **Postgres** via Drizzle ORM (relational data)
+- **ChromaDB** vector store (embeddings retrieval)
+
+### 2.4 AI Integration
+- Gemini Flash LLM adapter (`server/gemini.ts`)
+- RAG pipeline flow
+
+## 3. Data & Control Flows
+- Sequence diagram: user quiz → API call → vector retrieval → LLM response
+
+## 4. Scalability & Performance
+- Caching strategy, rate limits, connection pooling
