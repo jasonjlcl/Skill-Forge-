@@ -10,3 +10,9 @@
 | **Password & PII**      | bcrypt (12 rounds) for passwords; other PII stored in plaintext  | Continue strong hashing; consider at-rest encryption for PII     |
 
 ### 🔐 Required Environment Variables
+GEMINI_API_KEY
+OPENAI_API_KEY
+DATABASE_URL
+JWT_SECRET
+RATE_LIMIT_MAX
+PORT
