@@ -7,7 +7,7 @@
 
 ## 📖 Project Overview
 Skill Forge addresses the evolving need for workforce transformation in manufacturing SMEs by delivering a GenAI-driven, personalized onboarding experience. Built as part of our A-grade Systems Design project, Skill Forge benchmarks Generative AI against traditional methods to empower Industry 5.0 objectives.
-
+https://lms.fiqfordini.com/auth
 ---
 
 ## 🌐 Background & Problem Statement
