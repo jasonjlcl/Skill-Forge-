@@ -1,0 +1,14 @@
+.git
+.github
+node_modules
+**/node_modules
+client/dist
+server/dist
+coverage
+*.log
+certs
+certs/
+.env
+.env.*
+!.env.example
+!.env.production.example

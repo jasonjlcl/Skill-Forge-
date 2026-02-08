@@ -1,0 +1,124 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  font-family: 'Space Grotesk', sans-serif;
+  color: #e2e8f0;
+  background-color: #070a12;
+}
+
+:root[data-theme='light'] {
+  color: #0f172a;
+  background-color: #edf3ff;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: #070a12;
+  color: #e2e8f0;
+}
+
+:root[data-theme='light'] body {
+  background: #edf3ff;
+  color: #0f172a;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+.aurora-layer {
+  position: absolute;
+  inset: -15%;
+  filter: blur(55px);
+  opacity: 0.5;
+  will-change: transform;
+}
+
+.aurora-one {
+  background: radial-gradient(circle at 20% 30%, rgba(56, 189, 248, 0.35), transparent 48%);
+  animation: drift-one 32s ease-in-out infinite alternate;
+}
+
+.aurora-two {
+  background: radial-gradient(circle at 80% 20%, rgba(167, 139, 250, 0.3), transparent 45%);
+  animation: drift-two 36s ease-in-out infinite alternate;
+}
+
+.aurora-three {
+  background: radial-gradient(circle at 55% 80%, rgba(45, 212, 191, 0.28), transparent 40%);
+  animation: drift-three 44s ease-in-out infinite alternate;
+}
+
+.noise-overlay {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(115deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+    linear-gradient(245deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+  background-size: 3px 3px, 4px 4px;
+  opacity: 0.28;
+  mix-blend-mode: soft-light;
+}
+
+:root[data-theme='light'] .aurora-layer {
+  opacity: 0.3;
+}
+
+:root[data-theme='light'] .noise-overlay {
+  opacity: 0.12;
+}
+
+@keyframes drift-one {
+  0% {
+    transform: translate3d(-3%, -2%, 0) scale(1);
+  }
+  100% {
+    transform: translate3d(6%, 4%, 0) scale(1.1);
+  }
+}
+
+@keyframes drift-two {
+  0% {
+    transform: translate3d(4%, -3%, 0) scale(1.05);
+  }
+  100% {
+    transform: translate3d(-5%, 5%, 0) scale(1.15);
+  }
+}
+
+@keyframes drift-three {
+  0% {
+    transform: translate3d(0%, 2%, 0) scale(0.95);
+  }
+  100% {
+    transform: translate3d(-3%, -4%, 0) scale(1.12);
+  }
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.3);
+  border-radius: 999px;
+}
+
+*::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.3);
+}
+
+.mono {
+  font-family: 'IBM Plex Mono', monospace;
+}
+

@@ -1,0 +1,36 @@
+{
+  "name": "genai-onboarding-platform",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev:server": "npm --prefix server run dev",
+    "dev:client": "npm --prefix client run dev",
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
+    "build:server": "npm --prefix server run build",
+    "build:client": "npm --prefix client run build",
+    "build": "npm run build:server && npm run build:client",
+    "test": "npm --prefix server run test",
+    "lint": "npm --prefix server run lint && npm --prefix client run lint",
+    "migrate": "npm --prefix server run migrate",
+    "docker:prod:up": "docker compose --env-file .env.production -f docker-compose.prod.yml up -d --build",
+    "docker:prod:up:tls": "docker compose --env-file .env.production -f docker-compose.prod.yml -f docker-compose.https.yml --profile tls up -d --build",
+    "docker:prod:up:https": "docker compose --env-file .env.production -f docker-compose.prod.yml -f docker-compose.https.yml up -d --build",
+    "docker:prod:down": "docker compose --env-file .env.production -f docker-compose.prod.yml down",
+    "docker:prod:down:tls": "docker compose --env-file .env.production -f docker-compose.prod.yml -f docker-compose.https.yml down",
+    "docker:prod:down:https": "docker compose --env-file .env.production -f docker-compose.prod.yml -f docker-compose.https.yml down",
+    "docker:prod:logs": "docker compose --env-file .env.production -f docker-compose.prod.yml logs -f --tail=200",
+    "docker:prod:logs:tls": "docker compose --env-file .env.production -f docker-compose.prod.yml -f docker-compose.https.yml logs -f --tail=200",
+    "docker:prod:logs:https": "docker compose --env-file .env.production -f docker-compose.prod.yml -f docker-compose.https.yml logs -f --tail=200",
+    "format": "prettier --write .",
+    "ingest": "tsx scripts/ingest.ts"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "dotenv": "^16.4.7",
+    "fast-glob": "^3.3.3",
+    "pdf-parse": "^1.1.1",
+    "prettier": "^3.5.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}

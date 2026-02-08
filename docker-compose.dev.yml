@@ -1,0 +1,73 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: genai_onboarding
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres_data_dev:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d genai_onboarding']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  chroma:
+    image: chromadb/chroma:0.5.15
+    ports:
+      - '8000:8000'
+    environment:
+      IS_PERSISTENT: 'TRUE'
+      CHROMA_SERVER_HOST: 0.0.0.0
+      CHROMA_SERVER_HTTP_PORT: 8000
+      PERSIST_DIRECTORY: /chroma/chroma
+    volumes:
+      - chroma_data_dev:/chroma/chroma
+
+  api:
+    image: node:20-alpine
+    working_dir: /workspace/server
+    command: sh -c "npm install && npm run dev"
+    environment:
+      NODE_ENV: development
+      PORT: 4000
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/genai_onboarding
+      JWT_SECRET: dev-secret-change-me
+      CORS_ORIGIN: http://localhost:5173
+      CHROMA_URL: http://chroma:8000
+      RATE_LIMIT_MAX: 1000
+      REQUEST_BODY_LIMIT: 2mb
+      COOKIE_SECURE: 'false'
+    volumes:
+      - ./server:/workspace/server
+      - server_node_modules:/workspace/server/node_modules
+    depends_on:
+      postgres:
+        condition: service_healthy
+      chroma:
+        condition: service_started
+    ports:
+      - '4000:4000'
+
+  client:
+    image: node:20-alpine
+    working_dir: /workspace/client
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 5173"
+    environment:
+      VITE_API_BASE: ''
+    volumes:
+      - ./client:/workspace/client
+      - client_node_modules:/workspace/client/node_modules
+    depends_on:
+      - api
+    ports:
+      - '5173:5173'
+
+volumes:
+  postgres_data_dev:
+  chroma_data_dev:
+  server_node_modules:
+  client_node_modules:

@@ -1,0 +1,83 @@
+server {
+  listen 80;
+  server_name $DOMAIN_NAME;
+
+  root /usr/share/nginx/html;
+  index index.html;
+
+  add_header X-Content-Type-Options "nosniff" always;
+  add_header X-Frame-Options "SAMEORIGIN" always;
+  add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+  add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
+  add_header Content-Security-Policy "default-src 'self'; connect-src 'self' https: wss: ws:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self' data:;" always;
+
+  location = /health {
+    access_log off;
+    default_type application/json;
+    return 200 '{"status":"ok","service":"nginx"}';
+  }
+
+  # ACME challenge path for Let's Encrypt HTTP-01 verification.
+  location /.well-known/acme-challenge/ {
+    root /var/www/certbot;
+  }
+
+  location /assets/ {
+    try_files $uri =404;
+    expires 7d;
+    add_header Cache-Control "public, max-age=604800, immutable";
+  }
+
+  location = /api/chat/stream {
+    proxy_pass http://api:4000;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header Connection "";
+    proxy_buffering off;
+    proxy_cache off;
+    proxy_read_timeout 3600s;
+    proxy_send_timeout 3600s;
+    chunked_transfer_encoding off;
+  }
+
+  location /sse/ {
+    rewrite ^/sse/(.*)$ /$1 break;
+    proxy_pass http://api:4000;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header Connection "";
+    proxy_buffering off;
+    proxy_cache off;
+    proxy_read_timeout 3600s;
+    proxy_send_timeout 3600s;
+    chunked_transfer_encoding off;
+  }
+
+  location /api/ {
+    proxy_pass http://api:4000;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+  }
+
+  location ~ ^/(auth|chat|quiz|me)(/.*)?$ {
+    proxy_pass http://api:4000;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+  }
+
+  location / {
+    try_files $uri $uri/ /index.html;
+  }
+}
