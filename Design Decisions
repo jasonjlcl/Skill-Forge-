@@ -1,0 +1,18 @@
+# Design Decisions
+
+## 1. Tech Stack Choices
+- **Why React + Vite:** fast refresh, minimal config
+- **Why Node.js & Express:** lightweight, SSE support
+
+## 2. Database Selection
+- **Postgres vs. NoSQL:** relational for user data, vector store for embeddings
+
+## 3. LLM Integration
+- **Gemini Flash** vs. OpenAI GPT: cost, latency, on-prem fallback
+
+## 4. Authentication & Security
+- JWT in SameSite-Strict cookies, CSRF considerations
+
+## 5. Trade-offs
+- Server-side rendering vs. SPA
+- Monolithic repo vs. microservices

@@ -1,21 +1,27 @@
-# GenAI Onboarding Platform
+# Skill Forge: GenAI-Powered Onboarding Platform
 
-Web-based training platform for manufacturing SMEs with:
-- JWT auth and secure cookie sessions
-- SSE chat tutoring with retrieval context
-- Explainability and source-backed responses
-- AI-generated quizzes with analytics
-- PostgreSQL + ChromaDB support
+GenAI-driven onboarding/training platform for manufacturing SMEs:
+- JWT auth with secure cookie sessions
+- SSE chat tutoring with retrieval context + explainability
+- AI-generated quizzes and analytics dashboard
+- PostgreSQL + Drizzle ORM (production) with in-memory fallback
+- Optional ChromaDB integration with in-memory fallback
+
+Example live site: `https://skillforge.it.com`
+
+## Project Context
+
+Originally built as part of a systems design project focused on GenAI-assisted onboarding in manufacturing SMEs.
 
 ## Stack
 
 - Frontend: React + Vite + TypeScript + Tailwind
 - Backend: Node.js + Express + TypeScript
-- Data: PostgreSQL (Drizzle ORM)
-- Vector store: ChromaDB
+- Database: PostgreSQL (via `DATABASE_URL`)
+- Vector store: ChromaDB (via `CHROMA_URL`)
 - LLM: Gemini (primary) / OpenAI (fallback)
 
-## Local development
+## Local Development
 
 1. Install dependencies:
 
@@ -43,24 +49,20 @@ npm run migrate
 npm run dev
 ```
 
-## Scripts
+## Environment Variables
 
-- `npm run dev` run server + client
-- `npm run build` build server + client
-- `npm run build:server` build API only
-- `npm run build:client` build SPA only
-- `npm run test` run server tests
-- `npm run lint` lint server + client
-- `npm run ingest -- --path ./training-docs --module "Safety Basics"` ingest docs into vector store
-- `npm run migrate` run Drizzle schema push
-- `npm run docker:prod:up` build and launch production stack
-- `npm run docker:prod:up:tls` launch production stack with TLS/certbot overlay
-- `npm run docker:prod:down` stop production stack
-- `npm run docker:prod:down:tls` stop production TLS stack
-- `npm run docker:prod:logs` stream production logs
-- `npm run docker:prod:logs:tls` stream production TLS stack logs
+Use:
+- `.env.example` for local dev
+- `.env.production.example` for Docker/VPS deployments
 
-## API routes
+Important:
+- `JWT_SECRET` (must be at least 16 chars)
+- `CORS_ORIGIN`, `CLIENT_URL`
+- `GEMINI_API_KEY` and/or `OPENAI_API_KEY` (optional; server has a deterministic fallback for demos)
+- `DATABASE_URL` (optional; if omitted, server uses an in-memory store)
+- `CHROMA_URL` (optional; if omitted/unreachable, server uses an in-memory vector store)
+
+## API Routes
 
 Primary (legacy-compatible):
 - `POST /auth/register`
@@ -78,49 +80,26 @@ Primary (legacy-compatible):
 Also exposed under `/api/*` in production:
 - `GET /api/health` includes DB + Chroma dependency checks
 
-## Environment variables
+## Scripts
 
-Use `.env.example` for local and `.env.production.example` for deployment.
+- `npm run dev` run server + client
+- `npm run build` build server + client
+- `npm run test` run server tests
+- `npm run lint` lint server + client
+- `npm run migrate` run Drizzle schema push
 
-Required/important:
-- `NODE_ENV`, `PORT`
-- `DATABASE_URL` (or `POSTGRES_HOST` + `POSTGRES_PORT` + `POSTGRES_USER` + `POSTGRES_PASSWORD` + `POSTGRES_DB`)
-- `JWT_SECRET`
-- `CORS_ORIGIN`
-- `GEMINI_API_KEY` and/or `OPENAI_API_KEY`
-- `CHROMA_URL`, `CHROMA_COLLECTION`
-- `RATE_LIMIT_MAX`, `REQUEST_BODY_LIMIT`
-- `COOKIE_SECURE`
+Docker/VPS:
+- `npm run docker:prod:up`
+- `npm run docker:prod:up:tls` (includes Certbot profile)
+- `npm run docker:prod:up:https` (commercial cert install path)
+- `npm run docker:prod:down`
+- `npm run docker:prod:logs`
 
-## Production deployment (VPS)
+## Deployment Notes
 
-### 1) DNS
+### VPS (Recommended)
 
-Point your domain (for example `app.example.com`) to your VPS public IP:
-- `A` record: `app.example.com -> <VPS_IP>`
-
-### 2) Server prerequisites
-
-Install on VPS:
-- Docker Engine
-- Docker Compose plugin
-
-### 3) Deploy app
-
-```bash
-git clone <your-repo-url>
-cd genai-onboarding-platform
-cp .env.production.example .env.production
-# edit .env.production with real secrets and domain values
-npm run docker:prod:up
-```
-
-This launches:
-- `postgres` with persistent named volume
-- `chroma` with persistent named volume
-- `migrate` one-off service (`npm run migrate`)
-- `api` (Express app)
-- `web` (Nginx serving SPA + reverse proxy)
+This repo includes `docker-compose.prod.yml` plus a TLS overlay `docker-compose.https.yml`.
 
 If your repo is on OneDrive/Windows reparse-point storage and Docker BuildKit fails, use legacy build mode:
 
@@ -130,116 +109,8 @@ $env:COMPOSE_DOCKER_CLI_BUILD='0'
 npm run docker:prod:up
 ```
 
-### 4) Health checks
+### Shared Hosting (cPanel/CloudLinux)
 
-- Nginx liveness: `GET /health`
-- API dependency health: `GET /api/health`
-
-### 5) Update procedure
-
-```bash
-git pull
-npm run docker:prod:up
-```
-
-### 6) Rollback
-
-Use previous git commit/tag and redeploy:
-
-```bash
-git checkout <previous-tag-or-commit>
-npm run docker:prod:up
-```
-
-### 7) Back up Postgres
-
-Example backup command:
-
-```bash
-docker compose --env-file .env.production -f docker-compose.prod.yml exec -T postgres \
-  pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB" > backup-$(date +%F).sql
-```
-
-Restore:
-
-```bash
-cat backup-YYYY-MM-DD.sql | docker compose --env-file .env.production -f docker-compose.prod.yml exec -T postgres \
-  psql -U "$POSTGRES_USER" "$POSTGRES_DB"
-```
-
-## HTTPS readiness
-
-### Option A: Nginx + Let's Encrypt (Certbot)
-
-This repo includes a TLS overlay compose file: `docker-compose.https.yml`.
-
-1. Set domain env values in `.env.production`:
-   - `DOMAIN_NAME=app.example.com`
-   - `CORS_ORIGIN=https://app.example.com`
-   - `CLIENT_URL=https://app.example.com`
-   - `CERTBOT_EMAIL=admin@app.example.com`
-2. Start stack with TLS overlay in HTTP mode first:
-   - `ENABLE_TLS=false`
-   - `COOKIE_SECURE=false`
-   - `npm run docker:prod:up:tls`
-3. Issue certificate with webroot challenge:
-
-```bash
-docker compose --env-file .env.production -f docker-compose.prod.yml -f docker-compose.https.yml --profile tls run --rm certbot \
-  certonly --webroot -w /var/www/certbot \
-  -d "$DOMAIN_NAME" --email "$CERTBOT_EMAIL" --agree-tos --no-eff-email
-```
-
-4. Enable TLS and secure cookies:
-   - `ENABLE_TLS=true`
-   - `COOKIE_SECURE=true`
-5. Recreate stack:
-   - `npm run docker:prod:up:tls`
-
-The `certbot` service in the TLS profile performs periodic renewals (`certbot renew` loop).
-
-Suggested HTTPS Nginx directives:
-- `listen 443 ssl http2;`
-- `ssl_certificate /etc/letsencrypt/live/app.example.com/fullchain.pem;`
-- `ssl_certificate_key /etc/letsencrypt/live/app.example.com/privkey.pem;`
-- `return 301 https://$host$request_uri;` in port 80 server block
-
-### Option C: Commercial Certificate (PositiveSSL, etc.)
-
-If you already have an issued certificate + matching private key (for example PositiveSSL), you can skip Certbot issuance.
-
-1. Create `certs/fullchain.pem` and `certs/privkey.pem`:
-   - `fullchain.pem` should be your leaf cert followed by the CA bundle/intermediate(s).
-2. Copy certs into the Docker cert volume:
-
-```bash
-sh scripts/prod/install-positive-ssl-to-volume.sh
-```
-
-3. Start the stack with the HTTPS overlay (without enabling the `tls` profile):
-
-```bash
-npm run docker:prod:up:https
-```
-
-`docker:prod:up:tls` is only needed for the Certbot profile.
-
-### Option B: Managed reverse proxy/CDN
-
-Run this stack behind a managed edge (for example Cloudflare, Render edge proxy, or managed LB):
-- Terminate TLS at edge
-- Forward traffic to VPS `web` container on port `80`
-- Preserve `X-Forwarded-Proto` and `Host` headers
-- Keep `COOKIE_SECURE=true`
-
-## CI/CD
-
-GitHub Actions workflow is included at:
-- `.github/workflows/ci-cd.yml`
-
-It performs:
-- lint + tests + builds
-- Docker image build
-- optional GHCR push on `main`
-- deploy job template for SSH-based VPS rollout
+Shared hosting typically cannot run Docker or PostgreSQL/Chroma locally. In that environment the app can run,
+but persistence and retrieval are limited unless you connect to external managed services.
 

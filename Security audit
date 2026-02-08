@@ -1,0 +1,18 @@
+## 🔒 Security & Ethics Audit
+
+| Aspect                  | Current State                                                    | Recommendation                                                   |
+|-------------------------|------------------------------------------------------------------|------------------------------------------------------------------|
+| **Transport**           | Dev: HTTP; Prod: behind Nginx/TLS                                | Enforce HTTPS in all environments & enable HSTS                  |
+| **Session Cookies**     | Using `connect-pg-simple`; cookies not `Secure` or `SameSite`    | Mark cookies `Secure: true` and `SameSite: Strict` in production|
+| **Rate Limits**         | Hard-coded 100 req / 15 min                                      | Parameterize via `RATE_LIMIT_MAX` env var                        |
+| **Secrets Management**  | Stored in local `.env`                                           | Rotate quarterly & migrate to a secrets vault (e.g. Vault)       |
+| **Data Export**         | No self-service export endpoint                                  | Add `/me/export` endpoint for GDPR/PDPA compliance               |
+| **Password & PII**      | bcrypt (12 rounds) for passwords; other PII stored in plaintext  | Continue strong hashing; consider at-rest encryption for PII     |
+
+### 🔐 Required Environment Variables
+GEMINI_API_KEY
+OPENAI_API_KEY
+DATABASE_URL
+JWT_SECRET
+RATE_LIMIT_MAX
+PORT
