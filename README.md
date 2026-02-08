@@ -13,6 +13,59 @@ Example live site: `https://skillforge.it.com`
 
 Originally built as part of a systems design project focused on GenAI-assisted onboarding in manufacturing SMEs.
 
+## What The Web App Does
+
+1. User signs up / signs in.
+2. User selects a training module (for example Safety Basics, Machine Setup).
+3. User asks questions in chat:
+   - API retrieves relevant training chunks (ChromaDB when configured; otherwise in-memory fallback).
+   - API calls the LLM (Gemini/OpenAI when configured; otherwise a deterministic fallback).
+   - Response streams back to the browser over SSE (server-sent events).
+4. User can generate quizzes and submit answers.
+5. API records progress and analytics (Postgres when configured; otherwise in-memory fallback).
+
+## High-Level Architecture
+
+```mermaid
+flowchart LR
+  U[User] --> B[Browser]
+  B --> SPA[React SPA (Vite)]
+
+  SPA -->|HTTPS JSON| API[Node.js + Express API]
+  SPA -->|HTTPS SSE| SSE[SSE: /api/chat/stream]
+
+  subgraph Data
+    PG[(PostgreSQL via Drizzle)]
+    VS[(ChromaDB vector store)]
+  end
+
+  subgraph AI
+    LLM[Gemini / OpenAI]
+  end
+
+  API --> PG
+  API --> VS
+  API --> LLM
+  API --> SSE
+```
+
+## Chat Request Flow (SSE)
+
+```mermaid
+sequenceDiagram
+  participant SPA as React SPA
+  participant API as Express API
+  participant VS as Vector Store (Chroma/InMem)
+  participant LLM as LLM (Gemini/OpenAI)
+
+  SPA->>API: GET /api/chat/stream?message=...
+  API->>VS: query(topK, module)
+  VS-->>API: contextChunks
+  API->>LLM: prompt(question + contextChunks)
+  LLM-->>API: answer
+  API-->>SPA: SSE events: meta, token*, done
+```
+
 ## Stack
 
 - Frontend: React + Vite + TypeScript + Tailwind
@@ -113,4 +166,3 @@ npm run docker:prod:up
 
 Shared hosting typically cannot run Docker or PostgreSQL/Chroma locally. In that environment the app can run,
 but persistence and retrieval are limited unless you connect to external managed services.
-

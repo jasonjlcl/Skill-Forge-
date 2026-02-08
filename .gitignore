@@ -24,6 +24,7 @@ yarn-debug.log*
 !.env.production.example
 server/.env
 client/.env
+!client/.env.production
 
 # TypeScript cache
 *.tsbuildinfo
@@ -33,4 +34,3 @@ client/.env
 
 # Local certs / secrets
 certs/
-
