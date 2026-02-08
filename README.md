@@ -28,25 +28,20 @@ Originally built as part of a systems design project focused on GenAI-assisted o
 
 ```mermaid
 flowchart LR
-  U[User] --> B[Browser]
-  B --> SPA[React SPA (Vite)]
-
-  SPA -->|HTTPS JSON| API[Node.js + Express API]
-  SPA -->|HTTPS SSE| SSE[SSE: /api/chat/stream]
-
+  U[User] --> B[Browser];
+  B --> SPA["React SPA (Vite)"];
+  SPA -->|HTTPS JSON| API["Node.js + Express API"];
+  SPA -->|HTTPS SSE| SSE["SSE: /api/chat/stream"];
   subgraph Data
-    PG[(PostgreSQL via Drizzle)]
-    VS[(ChromaDB vector store)]
+    PG[("PostgreSQL via Drizzle")];
+    VS[("ChromaDB vector store")];
   end
-
   subgraph AI
-    LLM[Gemini / OpenAI]
+    LLM["Gemini / OpenAI"];
   end
-
-  API --> PG
-  API --> VS
-  API --> LLM
-  API --> SSE
+  API --> PG;
+  API --> VS;
+  API --> LLM;
 ```
 
 ## Chat Request Flow (SSE)
