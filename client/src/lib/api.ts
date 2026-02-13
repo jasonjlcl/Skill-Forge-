@@ -10,12 +10,27 @@ import type {
   UserProfile,
 } from '../types';
 
-const apiBase = import.meta.env.VITE_API_BASE ?? '';
+// Default to /api so production remains correct even if VITE_API_BASE is omitted.
+const apiBase = import.meta.env.VITE_API_BASE ?? '/api';
 
 const fallbackModules = ['Safety Basics', 'Machine Setup', 'Quality Control', 'Preventive Maintenance'];
 
+const parseJsonBody = async (response: Response): Promise<unknown> => {
+  const text = await response.text();
+  if (!text) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return { __raw: text };
+  }
+};
+
 const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
-  const response = await fetch(`${apiBase}${path}`, {
+  const url = `${apiBase}${path}`;
+  const response = await fetch(url, {
     ...init,
     credentials: 'include',
     headers: {
@@ -25,15 +40,35 @@ const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
   });
 
   if (!response.ok) {
-    const payload = await response.json().catch(() => ({ error: 'Request failed' }));
-    throw new Error(payload.error ?? 'Request failed');
+    const payload = await parseJsonBody(response);
+    const message =
+      payload &&
+      typeof payload === 'object' &&
+      'error' in payload &&
+      typeof payload.error === 'string'
+        ? payload.error
+        : payload &&
+            typeof payload === 'object' &&
+            '__raw' in payload &&
+            typeof payload.__raw === 'string' &&
+            payload.__raw.toLowerCase().includes('<!doctype')
+          ? `API misconfigured: received HTML from ${url}. Check VITE_API_BASE and deployment rewrites.`
+          : `Request failed (${response.status})`;
+    throw new Error(message);
   }
 
   if (response.status === 204) {
     return null as T;
   }
 
-  return (await response.json()) as T;
+  const payload = await parseJsonBody(response);
+  if (payload && typeof payload === 'object' && '__raw' in payload) {
+    throw new Error(
+      `Expected JSON from ${url}, received non-JSON response. Check VITE_API_BASE and deployment rewrites.`,
+    );
+  }
+
+  return payload as T;
 };
 
 export interface SendMessageInput {

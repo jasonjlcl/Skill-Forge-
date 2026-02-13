@@ -102,6 +102,7 @@ npm run dev
 Use:
 - `.env.example` for local dev
 - `.env.production.example` for Docker/VPS deployments
+- `client/.env.production.example` for frontend production API base (`VITE_API_BASE=/api`)
 
 Important:
 - `JWT_SECRET` (must be at least 16 chars)
@@ -142,6 +143,7 @@ Docker/VPS:
 - `npm run docker:prod:up:https` (commercial cert install path)
 - `npm run docker:prod:down`
 - `npm run docker:prod:logs`
+- `npm run smoke:auth -- https://your-domain` (signup/login/me/wrong-password smoke check)
 
 ## Deployment Notes
 

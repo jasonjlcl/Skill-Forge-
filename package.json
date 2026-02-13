@@ -22,7 +22,8 @@
     "docker:prod:logs:tls": "docker compose --env-file .env.production -f docker-compose.prod.yml -f docker-compose.https.yml logs -f --tail=200",
     "docker:prod:logs:https": "docker compose --env-file .env.production -f docker-compose.prod.yml -f docker-compose.https.yml logs -f --tail=200",
     "format": "prettier --write .",
-    "ingest": "tsx scripts/ingest.ts"
+    "ingest": "tsx scripts/ingest.ts",
+    "smoke:auth": "node scripts/auth-smoke.mjs"
   },
   "devDependencies": {
     "concurrently": "^9.1.2",
