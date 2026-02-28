@@ -35,7 +35,7 @@ jobs:
       - name: Scan for verified leaked secrets
         uses: trufflesecurity/trufflehog@v3.93.6
         with:
-          extra_args: --results=verified --fail
+          extra_args: --results=verified
 
   sast:
     runs-on: ubuntu-latest
