@@ -11,6 +11,8 @@ Core capabilities:
 
 Example live site: `https://skillforge.it.com`
 
+Architecture doc: [`Architecture.md`](./Architecture.md)
+
 ## What The App Does
 
 1. User signs up / signs in.
@@ -61,7 +63,7 @@ sequenceDiagram
   VS-->>API: contextChunks
   API->>LLM: question + budgeted context
   LLM-->>API: completion
-  API-->>SPA: SSE events: meta, token*, done
+  API-->>SPA: SSE events: meta, token, done
 ```
 
 ## PR1 Guardrails (Reliability + Cost)
@@ -72,6 +74,21 @@ Implemented in backend:
 - LLM output cap via `LLM_MAX_OUTPUT_TOKENS`
 - RAG prompt context budgeting via `RAG_MAX_CONTEXT_CHARS`
 - Hot-path DB indexes for chat/quiz retrieval paths
+
+## PR2 Guardrails (AI Safety + RAG Quality)
+
+Implemented quality and safety gates:
+- Output moderation layer blocks/reframes unsafe output classes before user-visible streaming
+- Retrieved context is sanitized and tagged with trust/risk metadata to resist prompt-injection patterns
+- `npm run eval:rag` runs a baseline suite for:
+  - retrieval top-1 accuracy checks
+  - prompt-injection sanitization checks
+  - moderation policy checks
+- CI runs `rag-eval` in non-blocking mode initially (`continue-on-error: true`)
+
+Current chat safety behavior:
+- `meta` SSE event includes source trust/risk tags for retrieved context
+- `done` SSE event includes moderation decision metadata (`allow`/`reframe`/`block`)
 
 ## Stack
 
@@ -155,6 +172,7 @@ All auth/chat/quiz/me routes are also mounted under `/api/*`.
 - `npm run migrate` run Drizzle `push` migration workflow
 - `npm run ingest` ingest training docs
 - `npm run eval:rag` run RAG eval script
+- `npm run eval:rag:ci` CI wrapper for the RAG eval baseline
 
 Docker/VPS:
 - `npm run docker:prod:up`
