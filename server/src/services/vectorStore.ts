@@ -42,7 +42,7 @@ interface ChromaCollection {
     documents: string[];
     embeddings: number[][];
     metadatas: Array<Record<string, unknown>>;
-  }): Promise<void>;
+  }): Promise<void | boolean>;
   query(input: {
     queryEmbeddings: number[][];
     nResults: number;
