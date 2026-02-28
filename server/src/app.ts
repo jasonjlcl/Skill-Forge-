@@ -6,6 +6,7 @@ import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
 import { env as defaultEnv, type EnvConfig } from './config/env.js';
 import type { AppDeps } from './domain/deps.js';
+import { wrapAsync } from './middleware/async.js';
 import { errorHandler, notFoundHandler } from './middleware/error.js';
 import { requestLogger } from './middleware/logging.js';
 import { createAuthRouter } from './routes/auth.js';
@@ -120,10 +121,13 @@ export const createApp = (overrides: AppOverrides = {}) => {
     });
   });
 
-  app.get('/api/health', async (_req, res) => {
-    const health = await getHealthSnapshot();
-    res.status(health.status === 'ok' ? 200 : 503).json(health);
-  });
+  app.get(
+    '/api/health',
+    wrapAsync(async (_req, res) => {
+      const health = await getHealthSnapshot();
+      res.status(health.status === 'ok' ? 200 : 503).json(health);
+    }),
+  );
 
   const authRouter = createAuthRouter(deps);
   const chatRouter = createChatRouter(deps);

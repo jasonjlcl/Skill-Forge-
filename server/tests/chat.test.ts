@@ -173,4 +173,92 @@ describe('chat stream', () => {
     expect(meta?.sources[0]?.source).toBe('docs/safety.md');
     expect(meta?.sources[0]?.excerpt).toContain('lockout-tagout');
   });
+
+  it('returns 500 JSON when an async stream handler throws and keeps serving requests', async () => {
+    const store = new InMemoryStore();
+    const vectorStore = {
+      upsert: async () => {},
+      query: async () => [
+        {
+          id: 'chunk-err-1',
+          module: 'Safety Basics',
+          source: 'docs/safety.md',
+          text: 'Use PPE before machine servicing.',
+          score: 0.9,
+          metadata: {},
+        },
+      ],
+    };
+
+    const llm: LlmClient = {
+      generateAssistance: async () => {
+        throw new Error('synthetic llm failure');
+      },
+      generateQuiz: async (): Promise<QuizQuestionDraft[]> => [],
+      explainWhy: async () => 'n/a',
+    };
+
+    const app = createApp({
+      store,
+      llm,
+      vectorStore,
+      env: {
+        NODE_ENV: 'test',
+        PORT: 4000,
+        DATABASE_URL: undefined,
+        GEMINI_API_KEY: undefined,
+        OPENAI_API_KEY: undefined,
+        JWT_SECRET: 'test-secret-with-length',
+        RATE_LIMIT_MAX: 1000,
+        AUTH_RATE_LIMIT_MAX: 1000,
+        LOGIN_MAX_ATTEMPTS: 5,
+        LOGIN_LOCKOUT_MINUTES: 15,
+        authRateLimitMax: 1000,
+        loginMaxAttempts: 5,
+        loginLockoutMinutes: 15,
+        REQUEST_BODY_LIMIT: '2mb',
+        CLIENT_URL: 'http://localhost:5173',
+        CHROMA_URL: undefined,
+        CHROMA_COLLECTION: 'test_collection',
+        COOKIE_SECURE: 'false',
+        cookieSecure: false,
+        ragTopK: 3,
+        ragMinScore: 0.2,
+        ragMaxContextChars: 1500,
+        ragRequireContext: true,
+        streamRequestTtlSeconds: 120,
+      },
+    });
+
+    const register = await request(app)
+      .post('/auth/register')
+      .send({ email: 'stream-err@example.com', password: 'strong-pass-123', language: 'en' })
+      .expect(201);
+
+    const setCookie = normalizeSetCookie(register.headers['set-cookie']);
+    const cookieHeader = toCookieHeader(setCookie);
+    const csrfToken = extractCookieValue(setCookie, 'csrf_token');
+    expect(csrfToken).toBeTruthy();
+
+    const streamStart = await request(app)
+      .post('/chat/stream/start')
+      .set('Cookie', cookieHeader)
+      .set('x-csrf-token', csrfToken as string)
+      .send({
+        message: 'What should I do before servicing a machine?',
+        module: 'Safety Basics',
+      })
+      .expect(201);
+
+    const streamResponse = await request(app)
+      .get('/chat/stream')
+      .query({ stream_id: streamStart.body.streamId })
+      .set('Cookie', cookieHeader)
+      .expect(500);
+
+    expect(streamResponse.headers['content-type']).toContain('application/json');
+    expect(streamResponse.body.error).toBe('synthetic llm failure');
+
+    await request(app).get('/health').expect(200);
+  });
 });

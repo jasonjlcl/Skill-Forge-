@@ -3,6 +3,7 @@ import { Router, type Response } from 'express';
 import { z } from 'zod';
 import type { AppDeps } from '../domain/deps.js';
 import { requireAuth } from '../middleware/auth.js';
+import { wrapAsync } from '../middleware/async.js';
 import { requireCsrf } from '../middleware/csrf.js';
 import { consumeStreamRequest, registerStreamRequest } from '../services/chatStreamRegistry.js';
 import { detectLanguage } from '../services/language.js';
@@ -49,220 +50,239 @@ const toExcerpt = (text: string, maxLength = 220): string => {
 export const createChatRouter = (deps: AppDeps): Router => {
   const router = Router();
 
-  router.post('/session', requireAuth(deps.store), requireCsrf, async (req, res) => {
-    const parsed = sessionSchema.safeParse(req.body);
-    if (!parsed.success) {
-      res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Invalid request body' });
-      return;
-    }
+  router.post(
+    '/session',
+    requireAuth(deps.store),
+    requireCsrf,
+    wrapAsync(async (req, res) => {
+      const parsed = sessionSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Invalid request body' });
+        return;
+      }
 
-    const session = await deps.store.createSession({
-      userId: req.user.id,
-      module: parsed.data.module,
-      id: randomUUID(),
-    });
+      const session = await deps.store.createSession({
+        userId: req.user.id,
+        module: parsed.data.module,
+        id: randomUUID(),
+      });
 
-    res.status(201).json({
-      sessionId: session.id,
-      module: session.module,
-      startedAt: session.startedAt.toISOString(),
-    });
-  });
+      res.status(201).json({
+        sessionId: session.id,
+        module: session.module,
+        startedAt: session.startedAt.toISOString(),
+      });
+    }),
+  );
 
-  router.post('/stream/start', requireAuth(deps.store), requireCsrf, async (req, res) => {
-    const parsed = streamStartSchema.safeParse(req.body);
-    if (!parsed.success) {
-      res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Invalid request body' });
-      return;
-    }
+  router.post(
+    '/stream/start',
+    requireAuth(deps.store),
+    requireCsrf,
+    wrapAsync(async (req, res) => {
+      const parsed = streamStartSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Invalid request body' });
+        return;
+      }
 
-    const { sessionId, message, module, topK, timeSeconds } = parsed.data;
+      const { sessionId, message, module, topK, timeSeconds } = parsed.data;
 
-    if (sessionId) {
-      const existing = await deps.store.getSession(sessionId);
-      if (existing && existing.userId !== req.user.id) {
+      if (sessionId) {
+        const existing = await deps.store.getSession(sessionId);
+        if (existing && existing.userId !== req.user.id) {
+          res.status(403).json({ error: 'Forbidden' });
+          return;
+        }
+      }
+
+      const streamId = registerStreamRequest(req.user.id, {
+        sessionId,
+        message,
+        module,
+        topK,
+        timeSeconds,
+      });
+
+      res.status(201).json({
+        streamId,
+        expiresInSeconds: deps.env.streamRequestTtlSeconds,
+      });
+    }),
+  );
+
+  router.get(
+    '/stream',
+    requireAuth(deps.store),
+    wrapAsync(async (req, res) => {
+      const parsed = streamQuerySchema.safeParse(req.query);
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Invalid query parameters' });
+        return;
+      }
+
+      const pending = consumeStreamRequest(req.user.id, parsed.data.stream_id);
+      if (!pending) {
+        res.status(404).json({ error: 'Stream request not found or expired' });
+        return;
+      }
+
+      const { sessionId: sessionIdFromQuery, message, module, topK, timeSeconds } = pending;
+
+      let session = sessionIdFromQuery ? await deps.store.getSession(sessionIdFromQuery) : null;
+      const effectiveModule = module || session?.module || 'General Onboarding';
+
+      if (!session) {
+        session = await deps.store.createSession({
+          id: sessionIdFromQuery,
+          userId: req.user.id,
+          module: effectiveModule,
+        });
+      }
+
+      if (session.userId !== req.user.id) {
         res.status(403).json({ error: 'Forbidden' });
         return;
       }
-    }
 
-    const streamId = registerStreamRequest(req.user.id, {
-      sessionId,
-      message,
-      module,
-      topK,
-      timeSeconds,
-    });
+      await deps.store.touchSession(session.id);
+      await deps.store.createMessage({
+        sessionId: session.id,
+        role: 'user',
+        content: message,
+      });
 
-    res.status(201).json({
-      streamId,
-      expiresInSeconds: deps.env.streamRequestTtlSeconds,
-    });
-  });
+      const detectedLanguage = detectLanguage(message);
+      const responseLanguage = detectedLanguage ?? req.user.language;
 
-  router.get('/stream', requireAuth(deps.store), async (req, res) => {
-    const parsed = streamQuerySchema.safeParse(req.query);
-    if (!parsed.success) {
-      res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Invalid query parameters' });
-      return;
-    }
+      if (detectedLanguage && detectedLanguage !== req.user.language) {
+        await deps.store.updateUser(req.user.id, { language: detectedLanguage });
+      }
 
-    const pending = consumeStreamRequest(req.user.id, parsed.data.stream_id);
-    if (!pending) {
-      res.status(404).json({ error: 'Stream request not found or expired' });
-      return;
-    }
-
-    const { sessionId: sessionIdFromQuery, message, module, topK, timeSeconds } = pending;
-
-    let session = sessionIdFromQuery ? await deps.store.getSession(sessionIdFromQuery) : null;
-    const effectiveModule = module || session?.module || 'General Onboarding';
-
-    if (!session) {
-      session = await deps.store.createSession({
-        id: sessionIdFromQuery,
-        userId: req.user.id,
+      const contextChunks = await deps.vectorStore.query({
+        query: message,
+        topK: topK ?? deps.env.ragTopK,
+        minScore: deps.env.ragMinScore,
         module: effectiveModule,
       });
-    }
 
-    if (session.userId !== req.user.id) {
-      res.status(403).json({ error: 'Forbidden' });
-      return;
-    }
+      const completion = await deps.llm.generateAssistance({
+        question: message,
+        language: responseLanguage,
+        skillLevel: req.user.skillLevel,
+        module: effectiveModule,
+        contextChunks,
+      });
 
-    await deps.store.touchSession(session.id);
-    await deps.store.createMessage({
-      sessionId: session.id,
-      role: 'user',
-      content: message,
-    });
+      await deps.store.createMessage({
+        sessionId: session.id,
+        role: 'assistant',
+        content: completion.answer,
+      });
 
-    const detectedLanguage = detectLanguage(message);
-    const responseLanguage = detectedLanguage ?? req.user.language;
+      await deps.store.upsertModuleProgress({
+        userId: req.user.id,
+        module: effectiveModule,
+        timeDeltaSeconds: Math.max(5, Math.floor(timeSeconds ?? 15)),
+        completed: false,
+      });
 
-    if (detectedLanguage && detectedLanguage !== req.user.language) {
-      await deps.store.updateUser(req.user.id, { language: detectedLanguage });
-    }
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('X-Accel-Buffering', 'no');
+      res.flushHeaders?.();
+      registerSseConnection(res);
 
-    const contextChunks = await deps.vectorStore.query({
-      query: message,
-      topK: topK ?? deps.env.ragTopK,
-      minScore: deps.env.ragMinScore,
-      module: effectiveModule,
-    });
+      let closed = false;
+      res.on('close', () => {
+        closed = true;
+      });
 
-    const completion = await deps.llm.generateAssistance({
-      question: message,
-      language: responseLanguage,
-      skillLevel: req.user.skillLevel,
-      module: effectiveModule,
-      contextChunks,
-    });
+      writeSse(res, 'meta', {
+        sessionId: session.id,
+        module: effectiveModule,
+        sources: contextChunks.map((chunk) => ({
+          id: chunk.id,
+          source: chunk.source,
+          score: chunk.score,
+          excerpt: toExcerpt(chunk.text),
+        })),
+      });
 
-    await deps.store.createMessage({
-      sessionId: session.id,
-      role: 'assistant',
-      content: completion.answer,
-    });
+      const tokens = completion.answer.split(/(\s+)/);
+      for (const token of tokens) {
+        if (closed) {
+          return;
+        }
+        if (!token) {
+          continue;
+        }
+        writeSse(res, 'token', { token });
+        await sleep(20);
+      }
 
-    await deps.store.upsertModuleProgress({
-      userId: req.user.id,
-      module: effectiveModule,
-      timeDeltaSeconds: Math.max(5, Math.floor(timeSeconds ?? 15)),
-      completed: false,
-    });
-
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-    res.setHeader('X-Accel-Buffering', 'no');
-    res.flushHeaders?.();
-    registerSseConnection(res);
-
-    let closed = false;
-    res.on('close', () => {
-      closed = true;
-    });
-
-    writeSse(res, 'meta', {
-      sessionId: session.id,
-      module: effectiveModule,
-      sources: contextChunks.map((chunk) => ({
-        id: chunk.id,
-        source: chunk.source,
-        score: chunk.score,
-        excerpt: toExcerpt(chunk.text),
-      })),
-    });
-
-    const tokens = completion.answer.split(/(\s+)/);
-    for (const token of tokens) {
       if (closed) {
         return;
       }
-      if (!token) {
-        continue;
+
+      writeSse(res, 'done', {
+        sessionId: session.id,
+        answer: completion.answer,
+      });
+      res.end();
+    }),
+  );
+
+  router.post(
+    '/explain',
+    requireAuth(deps.store),
+    requireCsrf,
+    wrapAsync(async (req, res) => {
+      const parsed = explainSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Invalid request body' });
+        return;
       }
-      writeSse(res, 'token', { token });
-      await sleep(20);
-    }
 
-    if (closed) {
-      return;
-    }
+      const { sessionId, module, question, answer } = parsed.data;
 
-    writeSse(res, 'done', {
-      sessionId: session.id,
-      answer: completion.answer,
-    });
-    res.end();
-  });
+      const contextChunks = await deps.vectorStore.query({
+        query: question,
+        topK: deps.env.ragTopK,
+        minScore: deps.env.ragMinScore,
+        module,
+      });
 
-  router.post('/explain', requireAuth(deps.store), requireCsrf, async (req, res) => {
-    const parsed = explainSchema.safeParse(req.body);
-    if (!parsed.success) {
-      res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Invalid request body' });
-      return;
-    }
+      const explanation = await deps.llm.explainWhy({
+        question,
+        answer,
+        language: req.user.language,
+        contextChunks,
+      });
 
-    const { sessionId, module, question, answer } = parsed.data;
-
-    const contextChunks = await deps.vectorStore.query({
-      query: question,
-      topK: deps.env.ragTopK,
-      minScore: deps.env.ragMinScore,
-      module,
-    });
-
-    const explanation = await deps.llm.explainWhy({
-      question,
-      answer,
-      language: req.user.language,
-      contextChunks,
-    });
-
-    if (sessionId) {
-      const session = await deps.store.getSession(sessionId);
-      if (session && session.userId === req.user.id) {
-        await deps.store.createMessage({
-          sessionId,
-          role: 'assistant',
-          content: `Explain Why: ${explanation}`,
-        });
+      if (sessionId) {
+        const session = await deps.store.getSession(sessionId);
+        if (session && session.userId === req.user.id) {
+          await deps.store.createMessage({
+            sessionId,
+            role: 'assistant',
+            content: `Explain Why: ${explanation}`,
+          });
+        }
       }
-    }
 
-    res.json({
-      explanation,
-      sources: contextChunks.map((chunk) => ({
-        id: chunk.id,
-        source: chunk.source,
-        score: chunk.score,
-        excerpt: toExcerpt(chunk.text),
-      })),
-    });
-  });
+      res.json({
+        explanation,
+        sources: contextChunks.map((chunk) => ({
+          id: chunk.id,
+          source: chunk.source,
+          score: chunk.score,
+          excerpt: toExcerpt(chunk.text),
+        })),
+      });
+    }),
+  );
 
   return router;
 };
