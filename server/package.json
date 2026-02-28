@@ -24,7 +24,6 @@
     "drizzle-orm": "^0.38.4",
     "express": "^4.21.2",
     "express-rate-limit": "^7.5.0",
-    "genai-onboarding-platform": "file:..",
     "helmet": "^8.0.0",
     "jsonwebtoken": "^9.0.2",
     "openai": "^4.80.0",
