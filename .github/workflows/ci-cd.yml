@@ -143,14 +143,11 @@ jobs:
           node-version: 20
           cache: npm
 
-      - name: Install root dependencies
-        run: npm ci
-
       - name: Install server dependencies
         run: npm --prefix server ci --install-strategy=nested
 
       - name: Run RAG baseline eval (non-blocking)
-        run: npm run eval:rag:ci
+        run: npm --prefix server exec tsx scripts/eval-rag.ts
 
   docker-build:
     runs-on: ubuntu-latest
