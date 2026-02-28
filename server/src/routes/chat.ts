@@ -7,6 +7,11 @@ import { wrapAsync } from '../middleware/async.js';
 import { requireCsrf } from '../middleware/csrf.js';
 import { consumeStreamRequest, registerStreamRequest } from '../services/chatStreamRegistry.js';
 import { detectLanguage } from '../services/language.js';
+import {
+  getSafetyPolicyVersion,
+  moderateAssistantOutput,
+  sanitizeRetrievedContext,
+} from '../services/safety.js';
 import { registerSseConnection } from '../services/sseRegistry.js';
 
 const streamQuerySchema = z.object({
@@ -165,19 +170,25 @@ export const createChatRouter = (deps: AppDeps): Router => {
         minScore: deps.env.ragMinScore,
         module: effectiveModule,
       });
+      const safeContextChunks = sanitizeRetrievedContext(contextChunks);
 
       const completion = await deps.llm.generateAssistance({
         question: message,
         language: responseLanguage,
         skillLevel: req.user.skillLevel,
         module: effectiveModule,
-        contextChunks,
+        contextChunks: safeContextChunks,
+      });
+
+      const moderatedAnswer = moderateAssistantOutput({
+        answer: completion.answer,
+        module: effectiveModule,
       });
 
       await deps.store.createMessage({
         sessionId: session.id,
         role: 'assistant',
-        content: completion.answer,
+        content: moderatedAnswer.text,
       });
 
       await deps.store.upsertModuleProgress({
@@ -202,15 +213,18 @@ export const createChatRouter = (deps: AppDeps): Router => {
       writeSse(res, 'meta', {
         sessionId: session.id,
         module: effectiveModule,
-        sources: contextChunks.map((chunk) => ({
+        safetyPolicyVersion: getSafetyPolicyVersion(),
+        sources: safeContextChunks.map((chunk) => ({
           id: chunk.id,
           source: chunk.source,
           score: chunk.score,
           excerpt: toExcerpt(chunk.text),
+          trustLevel: chunk.trustLevel,
+          riskTags: chunk.riskTags,
         })),
       });
 
-      const tokens = completion.answer.split(/(\s+)/);
+      const tokens = moderatedAnswer.text.split(/(\s+)/);
       for (const token of tokens) {
         if (closed) {
           return;
@@ -228,7 +242,12 @@ export const createChatRouter = (deps: AppDeps): Router => {
 
       writeSse(res, 'done', {
         sessionId: session.id,
-        answer: completion.answer,
+        answer: moderatedAnswer.text,
+        moderation: {
+          decision: moderatedAnswer.decision,
+          categories: moderatedAnswer.categories,
+          policyVersion: moderatedAnswer.policyVersion,
+        },
       });
       res.end();
     }),
@@ -253,12 +272,17 @@ export const createChatRouter = (deps: AppDeps): Router => {
         minScore: deps.env.ragMinScore,
         module,
       });
+      const safeContextChunks = sanitizeRetrievedContext(contextChunks);
 
       const explanation = await deps.llm.explainWhy({
         question,
         answer,
         language: req.user.language,
-        contextChunks,
+        contextChunks: safeContextChunks,
+      });
+      const moderatedExplanation = moderateAssistantOutput({
+        answer: explanation,
+        module: module ?? 'General Onboarding',
       });
 
       if (sessionId) {
@@ -267,18 +291,25 @@ export const createChatRouter = (deps: AppDeps): Router => {
           await deps.store.createMessage({
             sessionId,
             role: 'assistant',
-            content: `Explain Why: ${explanation}`,
+            content: `Explain Why: ${moderatedExplanation.text}`,
           });
         }
       }
 
       res.json({
-        explanation,
-        sources: contextChunks.map((chunk) => ({
+        explanation: moderatedExplanation.text,
+        safety: {
+          decision: moderatedExplanation.decision,
+          categories: moderatedExplanation.categories,
+          policyVersion: moderatedExplanation.policyVersion,
+        },
+        sources: safeContextChunks.map((chunk) => ({
           id: chunk.id,
           source: chunk.source,
           score: chunk.score,
           excerpt: toExcerpt(chunk.text),
+          trustLevel: chunk.trustLevel,
+          riskTags: chunk.riskTags,
         })),
       });
     }),

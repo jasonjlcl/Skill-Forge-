@@ -41,9 +41,12 @@ const truncateText = (text: string, maxChars: number): string => {
   return `${text.slice(0, maxChars - 3).trimEnd()}...`;
 };
 
-export const applyContextBudget = (chunks: RetrievedChunk[], maxChars: number): RetrievedChunk[] => {
+export const applyContextBudget = <TChunk extends RetrievedChunk>(
+  chunks: TChunk[],
+  maxChars: number,
+): TChunk[] => {
   const budget = Math.max(1, Math.floor(maxChars));
-  const capped: RetrievedChunk[] = [];
+  const capped: TChunk[] = [];
   let remaining = budget;
 
   for (const chunk of chunks) {
