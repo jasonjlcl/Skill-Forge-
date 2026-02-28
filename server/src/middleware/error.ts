@@ -1,6 +1,11 @@
 import type { NextFunction, Request, Response } from 'express';
 import { env } from '../config/env.js';
 
+const sanitizePath = (url: string): string => {
+  const [path] = url.split('?');
+  return path || '/';
+};
+
 export const notFoundHandler = (_req: Request, res: Response): void => {
   res.status(404).json({ error: 'Not found' });
 };
@@ -19,7 +24,7 @@ export const errorHandler = (
       message: 'request_failed',
       timestamp: new Date().toISOString(),
       error: message,
-      path: _req.originalUrl,
+      path: sanitizePath(_req.originalUrl),
       method: _req.method,
     }),
   );

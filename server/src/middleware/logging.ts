@@ -6,6 +6,11 @@ const toMilliseconds = (startNs: bigint): number => {
   return Number(durationNs) / 1_000_000;
 };
 
+const sanitizePath = (url: string): string => {
+  const [path] = url.split('?');
+  return path || '/';
+};
+
 export const requestLogger = (req: Request, res: Response, next: NextFunction): void => {
   const startedAt = process.hrtime.bigint();
   const requestId = req.get('x-request-id') ?? randomUUID();
@@ -18,7 +23,7 @@ export const requestLogger = (req: Request, res: Response, next: NextFunction): 
       timestamp: new Date().toISOString(),
       requestId,
       method: req.method,
-      path: req.originalUrl,
+      path: sanitizePath(req.originalUrl),
       statusCode: res.statusCode,
       durationMs: Number(toMilliseconds(startedAt).toFixed(2)),
       ip: req.ip,
