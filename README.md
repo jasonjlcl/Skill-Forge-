@@ -31,8 +31,8 @@ flowchart LR
   U[User] --> B[Browser]
   B --> WEB[NGINX Web Edge]
   WEB --> SPA[React SPA - Vite Build]
-  WEB -->|/api| API[Node.js + Express API]
-  WEB -->|/api/chat/stream (SSE)| SSE[/chat stream endpoint/]
+  WEB -->|"/api"| API[Node.js + Express API]
+  WEB -->|"/api/chat/stream (SSE)"| SSE["Chat Stream Endpoint"]
 
   subgraph Storage
     PG[(PostgreSQL 16 - Drizzle ORM)]
