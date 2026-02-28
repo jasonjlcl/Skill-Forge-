@@ -256,7 +256,7 @@ jobs:
           DEPLOY_REF: ${{ inputs.deploy_ref }}
           ENV_FILE: ${{ vars.DEPLOY_ENV_FILE }}
           ENABLE_HTTPS: ${{ vars.ENABLE_HTTPS }}
-          SSH_KEY_PATH: ~/.ssh/deploy_key
+          SSH_KEY_PATH: $HOME/.ssh/deploy_key
         run: sh scripts/prod/deploy-remote.sh
 
       - name: Run staging smoke test
@@ -312,7 +312,7 @@ jobs:
           DEPLOY_REF: ${{ inputs.deploy_ref }}
           ENV_FILE: ${{ vars.DEPLOY_ENV_FILE }}
           ENABLE_HTTPS: ${{ vars.ENABLE_HTTPS }}
-          SSH_KEY_PATH: ~/.ssh/deploy_key
+          SSH_KEY_PATH: $HOME/.ssh/deploy_key
         run: sh scripts/prod/deploy-remote.sh
 
       - name: Run production smoke test
@@ -336,7 +336,7 @@ jobs:
           ROLLBACK_REF: ${{ steps.prod_ref.outputs.value }}
           ENV_FILE: ${{ vars.DEPLOY_ENV_FILE }}
           ENABLE_HTTPS: ${{ vars.ENABLE_HTTPS }}
-          SSH_KEY_PATH: ~/.ssh/deploy_key
+          SSH_KEY_PATH: $HOME/.ssh/deploy_key
         run: sh scripts/prod/rollback-remote.sh
 
       - name: Fail deployment after rollback
