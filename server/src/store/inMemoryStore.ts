@@ -35,6 +35,10 @@ export class InMemoryStore implements DataStore {
       passwordHash: input.passwordHash,
       language: input.language,
       skillLevel: input.skillLevel,
+      tokenVersion: 0,
+      failedLoginAttempts: 0,
+      lockedUntil: null,
+      lastLoginAt: null,
       createdAt: new Date(),
     };
     this.users.push(user);
@@ -51,7 +55,12 @@ export class InMemoryStore implements DataStore {
 
   async updateUser(
     userId: string,
-    patch: Partial<Pick<User, 'language' | 'skillLevel'>>,
+    patch: Partial<
+      Pick<
+        User,
+        'language' | 'skillLevel' | 'tokenVersion' | 'failedLoginAttempts' | 'lockedUntil' | 'lastLoginAt'
+      >
+    >,
   ): Promise<User | null> {
     const user = this.users.find((entry) => entry.id === userId);
     if (!user) {
@@ -64,6 +73,22 @@ export class InMemoryStore implements DataStore {
 
     if (patch.skillLevel) {
       user.skillLevel = patch.skillLevel;
+    }
+
+    if (patch.tokenVersion !== undefined) {
+      user.tokenVersion = patch.tokenVersion;
+    }
+
+    if (patch.failedLoginAttempts !== undefined) {
+      user.failedLoginAttempts = Math.max(0, Math.floor(patch.failedLoginAttempts));
+    }
+
+    if (patch.lockedUntil !== undefined) {
+      user.lockedUntil = patch.lockedUntil;
+    }
+
+    if (patch.lastLoginAt !== undefined) {
+      user.lastLoginAt = patch.lastLoginAt;
     }
 
     return user;

@@ -15,6 +15,10 @@ export const users = pgTable('users', {
   passwordHash: text('password_hash').notNull(),
   language: text('language').notNull().default('en'),
   skillLevel: text('skill_level').notNull().default('beginner'),
+  tokenVersion: integer('token_version').notNull().default(0),
+  failedLoginAttempts: integer('failed_login_attempts').notNull().default(0),
+  lockedUntil: timestamp('locked_until', { withTimezone: true }),
+  lastLoginAt: timestamp('last_login_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 

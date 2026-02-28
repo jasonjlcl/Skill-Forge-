@@ -87,7 +87,12 @@ export class PostgresStore implements DataStore {
 
   async updateUser(
     userId: string,
-    patch: Partial<Pick<User, 'language' | 'skillLevel'>>,
+    patch: Partial<
+      Pick<
+        User,
+        'language' | 'skillLevel' | 'tokenVersion' | 'failedLoginAttempts' | 'lockedUntil' | 'lastLoginAt'
+      >
+    >,
   ): Promise<User | null> {
     const db = assertDb();
     const [updated] = await db
@@ -95,6 +100,10 @@ export class PostgresStore implements DataStore {
       .set({
         language: patch.language,
         skillLevel: patch.skillLevel,
+        tokenVersion: patch.tokenVersion,
+        failedLoginAttempts: patch.failedLoginAttempts,
+        lockedUntil: patch.lockedUntil,
+        lastLoginAt: patch.lastLoginAt,
       })
       .where(eq(users.id, userId))
       .returning();

@@ -19,7 +19,15 @@ export interface DataStore {
   }): Promise<User>;
   findUserByEmail(email: string): Promise<User | null>;
   getUserById(userId: string): Promise<User | null>;
-  updateUser(userId: string, patch: Partial<Pick<User, 'language' | 'skillLevel'>>): Promise<User | null>;
+  updateUser(
+    userId: string,
+    patch: Partial<
+      Pick<
+        User,
+        'language' | 'skillLevel' | 'tokenVersion' | 'failedLoginAttempts' | 'lockedUntil' | 'lastLoginAt'
+      >
+    >,
+  ): Promise<User | null>;
 
   createSession(input: { userId: string; module: string; id?: string }): Promise<TrainingSession>;
   getSession(sessionId: string): Promise<TrainingSession | null>;

@@ -4,6 +4,7 @@ import { env } from '../config/env.js';
 export interface AuthTokenPayload {
   userId: string;
   email: string;
+  tokenVersion: number;
 }
 
 const EXPIRATION = '7d';

@@ -22,6 +22,11 @@ export const requireAuth = (store: DataStore) => {
       return;
     }
 
+    if (payload.tokenVersion !== user.tokenVersion) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+
     req.user = user;
     next();
   };

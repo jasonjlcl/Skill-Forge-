@@ -8,6 +8,10 @@ export interface User {
   passwordHash: string;
   language: string;
   skillLevel: SkillLevel;
+  tokenVersion: number;
+  failedLoginAttempts: number;
+  lockedUntil: Date | null;
+  lastLoginAt: Date | null;
   createdAt: Date;
 }
 

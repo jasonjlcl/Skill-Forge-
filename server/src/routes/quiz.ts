@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import type { AppDeps } from '../domain/deps.js';
 import { requireAuth } from '../middleware/auth.js';
+import { requireCsrf } from '../middleware/csrf.js';
 import { deriveSkillLevel } from '../services/profiling.js';
 import { evaluateQuizAnswer } from '../services/quizEvaluation.js';
 
@@ -20,7 +21,7 @@ const answerSchema = z.object({
 export const createQuizRouter = (deps: AppDeps): Router => {
   const router = Router();
 
-  router.post('/start', requireAuth(deps.store), async (req, res) => {
+  router.post('/start', requireAuth(deps.store), requireCsrf, async (req, res) => {
     const parsed = startQuizSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Invalid request body' });
@@ -30,7 +31,8 @@ export const createQuizRouter = (deps: AppDeps): Router => {
     const topic = parsed.data.module || parsed.data.topic || 'General Onboarding';
     const contextChunks = await deps.vectorStore.query({
       query: `${topic} standard operating procedures`,
-      topK: 5,
+      topK: Math.max(3, deps.env.ragTopK),
+      minScore: deps.env.ragMinScore,
       module: topic,
     });
 
@@ -74,7 +76,7 @@ export const createQuizRouter = (deps: AppDeps): Router => {
     });
   });
 
-  router.post('/answer', requireAuth(deps.store), async (req, res) => {
+  router.post('/answer', requireAuth(deps.store), requireCsrf, async (req, res) => {
     const parsed = answerSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Invalid request body' });
