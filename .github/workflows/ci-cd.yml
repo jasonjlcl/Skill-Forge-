@@ -19,9 +19,6 @@ jobs:
           node-version: 20
           cache: npm
 
-      - name: Install root dependencies
-        run: npm ci
-
       - name: Install server dependencies
         run: npm --prefix server ci --install-strategy=nested
 
