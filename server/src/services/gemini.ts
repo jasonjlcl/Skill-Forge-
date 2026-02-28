@@ -4,7 +4,7 @@ import { z } from 'zod';
 import type { QuizQuestionDraft, SkillLevel } from '../domain/types.js';
 import { env } from '../config/env.js';
 import { skillPromptGuide } from './profiling.js';
-import type { RetrievedChunk } from './vectorStore.js';
+import { applyContextBudget, type RetrievedChunk } from './vectorStore.js';
 
 const quizSchema = z.array(
   z.object({
@@ -16,10 +16,54 @@ const quizSchema = z.array(
   }),
 );
 
-const toContextText = (chunks: RetrievedChunk[]): string =>
-  chunks
-    .map((chunk, index) => `[${index + 1}] (${chunk.source}) ${chunk.text}`)
-    .join('\n');
+const truncateText = (text: string, maxChars: number): string => {
+  if (maxChars <= 0) {
+    return '';
+  }
+
+  if (text.length <= maxChars) {
+    return text;
+  }
+
+  if (maxChars <= 3) {
+    return text.slice(0, maxChars);
+  }
+
+  return `${text.slice(0, maxChars - 3).trimEnd()}...`;
+};
+
+export const toContextText = (chunks: RetrievedChunk[], maxChars: number = env.ragMaxContextChars): string => {
+  const cappedChunks = applyContextBudget(chunks, maxChars);
+  const budget = Math.max(1, Math.floor(maxChars));
+  const lines: string[] = [];
+  let remaining = budget;
+
+  for (const chunk of cappedChunks) {
+    if (remaining <= 0) {
+      break;
+    }
+
+    const linePrefix = `[${lines.length + 1}] (${chunk.source}) `;
+    const availableForText = remaining - linePrefix.length;
+    if (availableForText <= 0) {
+      break;
+    }
+
+    const text = truncateText(chunk.text, availableForText);
+    if (!text) {
+      continue;
+    }
+
+    const line = `${linePrefix}${text}`;
+    lines.push(line);
+    remaining -= line.length;
+    if (remaining > 0) {
+      remaining -= 1;
+    }
+  }
+
+  return lines.join('\n');
+};
 
 const cleanJsonText = (raw: string): string => {
   const match = raw.match(/```json([\s\S]*?)```/i);
@@ -27,6 +71,23 @@ const cleanJsonText = (raw: string): string => {
     return match[1].trim();
   }
   return raw.trim();
+};
+
+const withTimeout = async <T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> => {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
 };
 
 export interface LlmClient {
@@ -59,9 +120,16 @@ export class GeminiLlmClient implements LlmClient {
     if (this.gemini) {
       try {
         const model = this.gemini.getGenerativeModel({ model: 'gemini-1.5-flash' });
-        const response = await model.generateContent({
-          contents: [{ role: 'user', parts: [{ text: `${systemPrompt}\n\n${prompt}` }] }],
-        });
+        const response = await withTimeout(
+          model.generateContent({
+            generationConfig: {
+              maxOutputTokens: env.llmMaxOutputTokens,
+            },
+            contents: [{ role: 'user', parts: [{ text: `${systemPrompt}\n\n${prompt}` }] }],
+          }),
+          env.llmTimeoutMs,
+          'Gemini request',
+        );
 
         return response.response.text().trim();
       } catch {
@@ -71,14 +139,19 @@ export class GeminiLlmClient implements LlmClient {
 
     if (this.openai) {
       try {
-        const response = await this.openai.chat.completions.create({
-          model: 'gpt-4o-mini',
-          temperature: 0.2,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: prompt },
-          ],
-        });
+        const response = await withTimeout(
+          this.openai.chat.completions.create({
+            model: 'gpt-4o-mini',
+            temperature: 0.2,
+            max_tokens: env.llmMaxOutputTokens,
+            messages: [
+              { role: 'system', content: systemPrompt },
+              { role: 'user', content: prompt },
+            ],
+          }),
+          env.llmTimeoutMs,
+          'OpenAI request',
+        );
 
         return response.choices[0]?.message?.content?.trim() ?? null;
       } catch {
@@ -96,7 +169,7 @@ export class GeminiLlmClient implements LlmClient {
     module: string;
     contextChunks: RetrievedChunk[];
   }): Promise<{ answer: string }> {
-    const context = toContextText(input.contextChunks);
+    const context = toContextText(input.contextChunks, env.ragMaxContextChars);
     const systemPrompt = [
       'You are a manufacturing training assistant for SME factory workers.',
       `Respond in language code: ${input.language}.`,
@@ -137,7 +210,7 @@ export class GeminiLlmClient implements LlmClient {
     skillLevel: SkillLevel;
     contextChunks: RetrievedChunk[];
   }): Promise<QuizQuestionDraft[]> {
-    const context = toContextText(input.contextChunks);
+    const context = toContextText(input.contextChunks, env.ragMaxContextChars);
     const systemPrompt = [
       'You generate structured factory-training quizzes.',
       `Respond in language code: ${input.language}.`,
@@ -212,7 +285,7 @@ export class GeminiLlmClient implements LlmClient {
     language: string;
     contextChunks: RetrievedChunk[];
   }): Promise<string> {
-    const context = toContextText(input.contextChunks);
+    const context = toContextText(input.contextChunks, env.ragMaxContextChars);
     const systemPrompt = [
       'You provide transparent reasoning for manufacturing training answers.',
       `Respond in language code: ${input.language}.`,

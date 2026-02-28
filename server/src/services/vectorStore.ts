@@ -25,6 +25,48 @@ export interface VectorStoreQueryInput {
   minScore?: number;
 }
 
+const truncateText = (text: string, maxChars: number): string => {
+  if (maxChars <= 0) {
+    return '';
+  }
+
+  if (text.length <= maxChars) {
+    return text;
+  }
+
+  if (maxChars <= 3) {
+    return text.slice(0, maxChars);
+  }
+
+  return `${text.slice(0, maxChars - 3).trimEnd()}...`;
+};
+
+export const applyContextBudget = (chunks: RetrievedChunk[], maxChars: number): RetrievedChunk[] => {
+  const budget = Math.max(1, Math.floor(maxChars));
+  const capped: RetrievedChunk[] = [];
+  let remaining = budget;
+
+  for (const chunk of chunks) {
+    if (remaining <= 0) {
+      break;
+    }
+
+    const trimmedText = truncateText(chunk.text, remaining);
+    if (!trimmedText) {
+      break;
+    }
+
+    capped.push({
+      ...chunk,
+      text: trimmedText,
+    });
+
+    remaining -= trimmedText.length;
+  }
+
+  return capped;
+};
+
 interface IndexedChunk extends TrainingChunk {
   embedding: number[];
 }
@@ -70,7 +112,7 @@ export class InMemoryVectorStore implements VectorStore {
       (chunk) => !input.module || chunk.module === input.module,
     );
 
-    return candidates
+    const ranked = candidates
       .map((chunk) => ({
         ...chunk,
         score: cosineSimilarity(queryEmbedding, chunk.embedding),
@@ -83,6 +125,8 @@ export class InMemoryVectorStore implements VectorStore {
         void embedding;
         return rest;
       });
+
+    return applyContextBudget(ranked, env.ragMaxContextChars);
   }
 }
 
@@ -151,7 +195,7 @@ class ChromaVectorStore implements VectorStore {
       const metadatas = result.metadatas?.[0] ?? [];
       const distances = result.distances?.[0] ?? [];
 
-      return ids
+      const ranked = ids
         .map((id: string, index: number) => ({
           id,
           text: docs[index] ?? '',
@@ -161,6 +205,8 @@ class ChromaVectorStore implements VectorStore {
           score: distances[index] !== undefined ? 1 / (1 + distances[index]) : 0,
         }))
         .filter((chunk) => chunk.score >= minScore);
+
+      return applyContextBudget(ranked, env.ragMaxContextChars);
     } catch (error) {
       if (!this.allowFallback) {
         throw new Error(
