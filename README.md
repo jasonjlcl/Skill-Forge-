@@ -1,72 +1,84 @@
 # Skill Forge: GenAI-Powered Onboarding Platform
 
-GenAI-driven onboarding/training platform for manufacturing SMEs:
-- JWT auth with secure cookie sessions
-- SSE chat tutoring with retrieval context + explainability
-- AI-generated quizzes and analytics dashboard
-- PostgreSQL + Drizzle ORM (production) with in-memory fallback
-- Optional ChromaDB integration with in-memory fallback
+Skill Forge is a GenAI onboarding/training webapp for manufacturing teams.
+
+Core capabilities:
+- Cookie-based auth with CSRF protection and account lockout controls
+- Retrieval-augmented chat with SSE responses (`meta`, `token`, `done`)
+- AI-generated quizzes, scoring, module progress, and analytics
+- PostgreSQL + Drizzle ORM (production) with in-memory fallback for local/test
+- ChromaDB vector retrieval (with in-memory fallback outside production)
 
 Example live site: `https://skillforge.it.com`
 
-## Project Context
-
-Originally built as part of a systems design project focused on GenAI-assisted onboarding in manufacturing SMEs.
-
-## What The Web App Does
+## What The App Does
 
 1. User signs up / signs in.
-2. User selects a training module (for example Safety Basics, Machine Setup).
+2. User starts learning in a module (for example `Safety Basics`, `Machine Setup`).
 3. User asks questions in chat:
-   - API retrieves relevant training chunks (ChromaDB when configured; otherwise in-memory fallback).
-   - API calls the LLM (Gemini/OpenAI when configured; otherwise a deterministic fallback).
-   - Response streams back to the browser over SSE (server-sent events).
-4. User can generate quizzes and submit answers.
-5. API records progress and analytics (Postgres when configured; otherwise in-memory fallback).
+   - API stores a pending stream request.
+   - API retrieves relevant context chunks.
+   - API calls Gemini/OpenAI (or deterministic fallback) and streams SSE events.
+4. User can start quizzes and submit answers with immediate feedback.
+5. API records module progress and analytics.
 
 ## High-Level Architecture
 
 ```mermaid
 flowchart LR
-  U[User] --> B[Browser];
-  B --> SPA["React SPA (Vite)"];
-  SPA -->|HTTPS JSON| API["Node.js + Express API"];
-  SPA -->|HTTPS SSE| SSE["SSE: /api/chat/stream"];
-  subgraph Data
-    PG[("PostgreSQL via Drizzle")];
-    VS[("ChromaDB vector store")];
+  U[User] --> B[Browser]
+  B --> SPA[React SPA - Vite]
+  SPA -->|HTTPS JSON| API[Node.js + Express API]
+  SPA -->|HTTPS SSE| SSE[/api/chat/stream]
+
+  subgraph Storage
+    PG[(PostgreSQL - Drizzle ORM)]
+    VS[(ChromaDB / InMemory Vector Store)]
   end
+
   subgraph AI
-    LLM["Gemini / OpenAI"];
+    LLM[Gemini 1.5 Flash / OpenAI gpt-4o-mini]
   end
-  API --> PG;
-  API --> VS;
-  API --> LLM;
+
+  API --> PG
+  API --> VS
+  API --> LLM
 ```
 
-## Chat Request Flow (SSE)
+## Chat Streaming Flow
 
 ```mermaid
 sequenceDiagram
   participant SPA as React SPA
   participant API as Express API
-  participant VS as Vector Store (Chroma/InMem)
-  participant LLM as LLM (Gemini/OpenAI)
+  participant VS as Vector Store
+  participant LLM as LLM
 
-  SPA->>API: GET /api/chat/stream?message=...
-  API->>VS: query(topK, module)
+  SPA->>API: POST /api/chat/stream/start
+  API-->>SPA: { streamId }
+  SPA->>API: GET /api/chat/stream?stream_id=...
+  API->>VS: query(topK, minScore, module)
   VS-->>API: contextChunks
-  API->>LLM: prompt(question + contextChunks)
-  LLM-->>API: answer
+  API->>LLM: question + budgeted context
+  LLM-->>API: completion
   API-->>SPA: SSE events: meta, token*, done
 ```
+
+## PR1 Guardrails (Reliability + Cost)
+
+Implemented in backend:
+- Async error boundaries via `wrapAsync` on async handlers and middleware
+- LLM request timeout via `LLM_TIMEOUT_MS`
+- LLM output cap via `LLM_MAX_OUTPUT_TOKENS`
+- RAG prompt context budgeting via `RAG_MAX_CONTEXT_CHARS`
+- Hot-path DB indexes for chat/quiz retrieval paths
 
 ## Stack
 
 - Frontend: React + Vite + TypeScript + Tailwind
 - Backend: Node.js + Express + TypeScript
-- Database: PostgreSQL (via `DATABASE_URL`)
-- Vector store: ChromaDB (via `CHROMA_URL`)
+- Database: PostgreSQL (`DATABASE_URL`)
+- Vector store: ChromaDB (`CHROMA_URL`)
 - LLM: Gemini (primary) / OpenAI (fallback)
 
 ## Local Development
@@ -85,7 +97,7 @@ npm --prefix client install
 cp .env.example .env
 ```
 
-3. Run migrations (optional but recommended):
+3. Run migrations:
 
 ```bash
 npm run migrate
@@ -100,34 +112,39 @@ npm run dev
 ## Environment Variables
 
 Use:
-- `.env.example` for local dev
-- `.env.production.example` for Docker/VPS deployments
-- `client/.env.production.example` for frontend production API base (`VITE_API_BASE=/api`)
+- `.env.example` for local development
+- `.env.production.example` for Docker/VPS deployment
+- `client/.env.production.example` for frontend API base (`VITE_API_BASE=/api`)
 
-Important:
-- `JWT_SECRET` (must be at least 16 chars)
+Important variables:
+- `JWT_SECRET` (production requires strong secret, minimum 32 chars)
 - `CORS_ORIGIN`, `CLIENT_URL`
-- `GEMINI_API_KEY` and/or `OPENAI_API_KEY` (optional; server has a deterministic fallback for demos)
-- `DATABASE_URL` (optional; if omitted, server uses an in-memory store)
-- `CHROMA_URL` (optional; if omitted/unreachable, server uses an in-memory vector store)
+- `GEMINI_API_KEY` and/or `OPENAI_API_KEY` (optional)
+- `DATABASE_URL` (required in production)
+- `CHROMA_URL` (required in production)
+- `RAG_MAX_CONTEXT_CHARS`
+- `LLM_MAX_OUTPUT_TOKENS`
+- `LLM_TIMEOUT_MS`
 
 ## API Routes
 
-Primary (legacy-compatible):
+Primary routes:
 - `POST /auth/register`
 - `POST /auth/login`
-- `POST /auth/logout`
+- `POST /auth/logout` (CSRF)
+- `POST /auth/sessions/revoke` (CSRF)
 - `GET /auth/me`
-- `POST /chat/session`
-- `GET /chat/stream`
-- `POST /chat/explain`
-- `POST /quiz/start`
-- `POST /quiz/answer`
+- `POST /chat/session` (CSRF)
+- `POST /chat/stream/start` (CSRF)
+- `GET /chat/stream?stream_id=...` (SSE)
+- `POST /chat/explain` (CSRF)
+- `POST /quiz/start` (CSRF)
+- `POST /quiz/answer` (CSRF)
 - `GET /me/analytics`
 - `GET /health`
+- `GET /api/health` (dependency-aware health snapshot)
 
-Also exposed under `/api/*` in production:
-- `GET /api/health` includes DB + Chroma dependency checks
+All auth/chat/quiz/me routes are also mounted under `/api/*`.
 
 ## Scripts
 
@@ -135,23 +152,25 @@ Also exposed under `/api/*` in production:
 - `npm run build` build server + client
 - `npm run test` run server tests
 - `npm run lint` lint server + client
-- `npm run migrate` run Drizzle schema push
+- `npm run migrate` run Drizzle `push` migration workflow
+- `npm run ingest` ingest training docs
+- `npm run eval:rag` run RAG eval script
 
 Docker/VPS:
 - `npm run docker:prod:up`
-- `npm run docker:prod:up:tls` (includes Certbot profile)
-- `npm run docker:prod:up:https` (commercial cert install path)
+- `npm run docker:prod:up:tls`
+- `npm run docker:prod:up:https`
 - `npm run docker:prod:down`
 - `npm run docker:prod:logs`
-- `npm run smoke:auth -- https://your-domain` (signup/login/me/wrong-password smoke check)
+- `npm run smoke:auth -- https://your-domain`
 
 ## Deployment Notes
 
 ### VPS (Recommended)
 
-This repo includes `docker-compose.prod.yml` plus a TLS overlay `docker-compose.https.yml`.
+This repo includes `docker-compose.prod.yml` plus TLS overlay `docker-compose.https.yml`.
 
-If your repo is on OneDrive/Windows reparse-point storage and Docker BuildKit fails, use legacy build mode:
+If Docker BuildKit has issues on OneDrive/Windows reparse-point paths, use legacy build mode:
 
 ```powershell
 $env:DOCKER_BUILDKIT='0'
@@ -161,5 +180,4 @@ npm run docker:prod:up
 
 ### Shared Hosting (cPanel/CloudLinux)
 
-Shared hosting typically cannot run Docker or PostgreSQL/Chroma locally. In that environment the app can run,
-but persistence and retrieval are limited unless you connect to external managed services.
+Shared hosting usually cannot run Docker/Postgres/Chroma locally. The app can still run, but production persistence/retrieval requires managed external services.
