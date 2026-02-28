@@ -23,7 +23,7 @@ jobs:
         run: npm ci
 
       - name: Install server dependencies
-        run: npm --prefix server ci
+        run: npm --prefix server ci --install-strategy=nested
 
       - name: Install client dependencies
         run: npm --prefix client ci
