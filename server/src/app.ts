@@ -29,6 +29,10 @@ const resolveEnv = (overrides?: Partial<EnvConfig>): EnvConfig => {
     ...(overrides ?? {}),
   } as EnvConfig;
 
+  const cookieSecureOverride =
+    overrides?.cookieSecure ??
+    (overrides?.COOKIE_SECURE !== undefined ? overrides.COOKIE_SECURE === 'true' : undefined);
+
   return {
     ...merged,
     corsOrigins:
@@ -37,11 +41,9 @@ const resolveEnv = (overrides?: Partial<EnvConfig>): EnvConfig => {
         : overrides?.CORS_ORIGIN
           ? parseOrigins(overrides.CORS_ORIGIN)
           : overrides?.CLIENT_URL
-            ? parseOrigins(overrides.CLIENT_URL)
+          ? parseOrigins(overrides.CLIENT_URL)
           : defaultEnv.corsOrigins,
-    cookieSecure:
-      overrides?.cookieSecure ??
-      (overrides?.COOKIE_SECURE ?? merged.cookieSecure),
+    cookieSecure: cookieSecureOverride ?? merged.cookieSecure,
   };
 };
 
