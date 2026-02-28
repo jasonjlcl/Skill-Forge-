@@ -28,6 +28,9 @@ jobs:
       - name: Install client dependencies
         run: npm --prefix client ci
 
+      - name: Audit dependencies
+        run: npm run audit
+
       - name: Lint
         run: npm run lint
 

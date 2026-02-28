@@ -11,6 +11,9 @@
     "build": "npm run build:server && npm run build:client",
     "test": "npm --prefix server run test",
     "lint": "npm --prefix server run lint && npm --prefix client run lint",
+    "audit:server": "npm --prefix server audit --omit=dev --audit-level=high",
+    "audit:client": "npm --prefix client audit --omit=dev --audit-level=high",
+    "audit": "npm run audit:server && npm run audit:client",
     "migrate": "npm --prefix server run migrate",
     "docker:prod:up": "docker compose --env-file .env.production -f docker-compose.prod.yml up -d --build",
     "docker:prod:up:tls": "docker compose --env-file .env.production -f docker-compose.prod.yml -f docker-compose.https.yml --profile tls up -d --build",
@@ -23,6 +26,7 @@
     "docker:prod:logs:https": "docker compose --env-file .env.production -f docker-compose.prod.yml -f docker-compose.https.yml logs -f --tail=200",
     "format": "prettier --write .",
     "ingest": "tsx scripts/ingest.ts",
+    "eval:rag": "tsx scripts/eval-rag.ts",
     "smoke:auth": "node scripts/auth-smoke.mjs"
   },
   "devDependencies": {
