@@ -114,7 +114,7 @@ export const useSSEChat = ({ selectedModule, onAnalyticsRefresh }: UseSSEChatOpt
       setMessages((previous) => [...previous, userMessage, assistantMessage]);
       closeStream();
 
-      const stream = sendMessage(
+      void sendMessage(
         {
           message: content,
           module: selectedModule,
@@ -183,9 +183,29 @@ export const useSSEChat = ({ selectedModule, onAnalyticsRefresh }: UseSSEChatOpt
             closeStream();
           },
         },
-      );
-
-      streamRef.current = stream;
+      )
+        .then((stream) => {
+          streamRef.current = stream;
+        })
+        .catch((err: unknown) => {
+          const message = err instanceof Error ? err.message : 'Could not start the secure chat stream.';
+          setErrorState(message);
+          setIsResponding(false);
+          setMessages((previous) =>
+            previous.map((messageItem) =>
+              messageItem.id === assistantMessageId
+                ? {
+                    ...messageItem,
+                    isStreaming: false,
+                    content:
+                      messageItem.content ||
+                      'I could not start the stream. Press retry to request it again.',
+                  }
+                : messageItem,
+            ),
+          );
+          closeStream();
+        });
     },
     [closeStream, isResponding, onAnalyticsRefresh, selectedModule, sessionId, setErrorState],
   );

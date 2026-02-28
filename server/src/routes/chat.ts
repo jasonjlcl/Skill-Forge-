@@ -3,15 +3,21 @@ import { Router, type Response } from 'express';
 import { z } from 'zod';
 import type { AppDeps } from '../domain/deps.js';
 import { requireAuth } from '../middleware/auth.js';
+import { requireCsrf } from '../middleware/csrf.js';
+import { consumeStreamRequest, registerStreamRequest } from '../services/chatStreamRegistry.js';
 import { detectLanguage } from '../services/language.js';
 import { registerSseConnection } from '../services/sseRegistry.js';
 
 const streamQuerySchema = z.object({
-  session_id: z.string().uuid().optional(),
-  message: z.string().min(1),
+  stream_id: z.string().uuid(),
+});
+
+const streamStartSchema = z.object({
+  sessionId: z.string().uuid().optional(),
+  message: z.string().min(1).max(4000),
   module: z.string().optional(),
-  top_k: z.coerce.number().optional(),
-  time_seconds: z.coerce.number().optional(),
+  topK: z.coerce.number().optional(),
+  timeSeconds: z.coerce.number().optional(),
 });
 
 const sessionSchema = z.object({
@@ -32,10 +38,18 @@ const writeSse = (res: Response, event: string, payload: unknown): void => {
   res.write(`data: ${JSON.stringify(payload)}\n\n`);
 };
 
+const toExcerpt = (text: string, maxLength = 220): string => {
+  const compact = text.replace(/\s+/g, ' ').trim();
+  if (compact.length <= maxLength) {
+    return compact;
+  }
+  return `${compact.slice(0, maxLength - 3)}...`;
+};
+
 export const createChatRouter = (deps: AppDeps): Router => {
   const router = Router();
 
-  router.post('/session', requireAuth(deps.store), async (req, res) => {
+  router.post('/session', requireAuth(deps.store), requireCsrf, async (req, res) => {
     const parsed = sessionSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Invalid request body' });
@@ -55,6 +69,37 @@ export const createChatRouter = (deps: AppDeps): Router => {
     });
   });
 
+  router.post('/stream/start', requireAuth(deps.store), requireCsrf, async (req, res) => {
+    const parsed = streamStartSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Invalid request body' });
+      return;
+    }
+
+    const { sessionId, message, module, topK, timeSeconds } = parsed.data;
+
+    if (sessionId) {
+      const existing = await deps.store.getSession(sessionId);
+      if (existing && existing.userId !== req.user.id) {
+        res.status(403).json({ error: 'Forbidden' });
+        return;
+      }
+    }
+
+    const streamId = registerStreamRequest(req.user.id, {
+      sessionId,
+      message,
+      module,
+      topK,
+      timeSeconds,
+    });
+
+    res.status(201).json({
+      streamId,
+      expiresInSeconds: deps.env.streamRequestTtlSeconds,
+    });
+  });
+
   router.get('/stream', requireAuth(deps.store), async (req, res) => {
     const parsed = streamQuerySchema.safeParse(req.query);
     if (!parsed.success) {
@@ -62,8 +107,13 @@ export const createChatRouter = (deps: AppDeps): Router => {
       return;
     }
 
-    const { session_id: sessionIdFromQuery, message, module, top_k: topK, time_seconds: timeSeconds } =
-      parsed.data;
+    const pending = consumeStreamRequest(req.user.id, parsed.data.stream_id);
+    if (!pending) {
+      res.status(404).json({ error: 'Stream request not found or expired' });
+      return;
+    }
+
+    const { sessionId: sessionIdFromQuery, message, module, topK, timeSeconds } = pending;
 
     let session = sessionIdFromQuery ? await deps.store.getSession(sessionIdFromQuery) : null;
     const effectiveModule = module || session?.module || 'General Onboarding';
@@ -97,7 +147,8 @@ export const createChatRouter = (deps: AppDeps): Router => {
 
     const contextChunks = await deps.vectorStore.query({
       query: message,
-      topK: topK ?? 4,
+      topK: topK ?? deps.env.ragTopK,
+      minScore: deps.env.ragMinScore,
       module: effectiveModule,
     });
 
@@ -137,7 +188,12 @@ export const createChatRouter = (deps: AppDeps): Router => {
     writeSse(res, 'meta', {
       sessionId: session.id,
       module: effectiveModule,
-      sources: contextChunks.map((chunk) => ({ id: chunk.id, source: chunk.source, score: chunk.score })),
+      sources: contextChunks.map((chunk) => ({
+        id: chunk.id,
+        source: chunk.source,
+        score: chunk.score,
+        excerpt: toExcerpt(chunk.text),
+      })),
     });
 
     const tokens = completion.answer.split(/(\s+)/);
@@ -163,7 +219,7 @@ export const createChatRouter = (deps: AppDeps): Router => {
     res.end();
   });
 
-  router.post('/explain', requireAuth(deps.store), async (req, res) => {
+  router.post('/explain', requireAuth(deps.store), requireCsrf, async (req, res) => {
     const parsed = explainSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Invalid request body' });
@@ -174,7 +230,8 @@ export const createChatRouter = (deps: AppDeps): Router => {
 
     const contextChunks = await deps.vectorStore.query({
       query: question,
-      topK: 4,
+      topK: deps.env.ragTopK,
+      minScore: deps.env.ragMinScore,
       module,
     });
 
@@ -198,7 +255,12 @@ export const createChatRouter = (deps: AppDeps): Router => {
 
     res.json({
       explanation,
-      sources: contextChunks.map((chunk) => ({ id: chunk.id, source: chunk.source, score: chunk.score })),
+      sources: contextChunks.map((chunk) => ({
+        id: chunk.id,
+        source: chunk.source,
+        score: chunk.score,
+        excerpt: toExcerpt(chunk.text),
+      })),
     });
   });
 

@@ -75,7 +75,11 @@ export const AuthProvider = ({ children }: PropsWithChildren) => {
   );
 
   const logoutUser = useCallback(async () => {
-    await logout();
+    try {
+      await logout();
+    } catch {
+      // local session state should still clear even if the server token is already invalid
+    }
     setUser(null);
   }, []);
 

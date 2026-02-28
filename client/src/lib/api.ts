@@ -15,6 +15,21 @@ const apiBase = import.meta.env.VITE_API_BASE ?? '/api';
 
 const fallbackModules = ['Safety Basics', 'Machine Setup', 'Quality Control', 'Preventive Maintenance'];
 
+const getCookie = (name: string): string | null => {
+  if (typeof document === 'undefined') {
+    return null;
+  }
+
+  const cookie = document.cookie
+    .split('; ')
+    .find((entry) => entry.startsWith(`${name}=`))
+    ?.split('=')
+    .slice(1)
+    .join('=');
+
+  return cookie ? decodeURIComponent(cookie) : null;
+};
+
 const parseJsonBody = async (response: Response): Promise<unknown> => {
   const text = await response.text();
   if (!text) {
@@ -30,11 +45,17 @@ const parseJsonBody = async (response: Response): Promise<unknown> => {
 
 const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
   const url = `${apiBase}${path}`;
+  const method = (init?.method ?? 'GET').toUpperCase();
+  const csrfToken = ['GET', 'HEAD', 'OPTIONS'].includes(method) ? null : getCookie('csrf_token');
+  const isFormData = typeof FormData !== 'undefined' && init?.body instanceof FormData;
+  const shouldSetJsonHeader = init?.body !== undefined && !isFormData;
+
   const response = await fetch(url, {
     ...init,
     credentials: 'include',
     headers: {
-      'Content-Type': 'application/json',
+      ...(shouldSetJsonHeader ? { 'Content-Type': 'application/json' } : {}),
+      ...(csrfToken ? { 'x-csrf-token': csrfToken } : {}),
       ...(init?.headers ?? {}),
     },
   });
@@ -86,17 +107,24 @@ export interface SendMessageHandlers {
   onError?: (error: Event) => void;
 }
 
-export const sendMessage = (input: SendMessageInput, handlers: SendMessageHandlers): EventSource => {
-  const params = new URLSearchParams({
-    message: input.message,
-    module: input.module,
-    top_k: String(input.topK ?? 4),
-    time_seconds: String(input.timeSeconds ?? 15),
+export const sendMessage = async (
+  input: SendMessageInput,
+  handlers: SendMessageHandlers,
+): Promise<EventSource> => {
+  const start = await request<{ streamId: string; expiresInSeconds: number }>('/chat/stream/start', {
+    method: 'POST',
+    body: JSON.stringify({
+      sessionId: input.sessionId,
+      message: input.message,
+      module: input.module,
+      topK: input.topK ?? 4,
+      timeSeconds: input.timeSeconds ?? 15,
+    }),
   });
 
-  if (input.sessionId) {
-    params.set('session_id', input.sessionId);
-  }
+  const params = new URLSearchParams({
+    stream_id: start.streamId,
+  });
 
   const source = new EventSource(`${apiBase}/chat/stream?${params.toString()}`, {
     withCredentials: true,
@@ -108,7 +136,7 @@ export const sendMessage = (input: SendMessageInput, handlers: SendMessageHandle
       ...payload,
       sources: (payload.sources ?? []).map((source) => ({
         ...source,
-        excerpt: source.source,
+        excerpt: source.excerpt ?? source.source,
       })),
     });
   });
