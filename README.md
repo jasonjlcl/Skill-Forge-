@@ -29,13 +29,14 @@ Architecture doc: [`Architecture.md`](./Architecture.md)
 ```mermaid
 flowchart LR
   U[User] --> B[Browser]
-  B --> SPA[React SPA - Vite]
-  SPA -->|HTTPS JSON| API[Node.js + Express API]
-  SPA -->|HTTPS SSE| SSE[/api/chat/stream]
+  B --> WEB[NGINX Web Edge]
+  WEB --> SPA[React SPA - Vite Build]
+  WEB -->|/api| API[Node.js + Express API]
+  WEB -->|/api/chat/stream (SSE)| SSE[/chat stream endpoint/]
 
   subgraph Storage
-    PG[(PostgreSQL - Drizzle ORM)]
-    VS[(ChromaDB / InMemory Vector Store)]
+    PG[(PostgreSQL 16 - Drizzle ORM)]
+    VS[(ChromaDB 0.5.x / InMemory Vector Store)]
   end
 
   subgraph AI
@@ -45,6 +46,20 @@ flowchart LR
   API --> PG
   API --> VS
   API --> LLM
+```
+
+## Delivery Architecture
+
+```mermaid
+flowchart LR
+  DEV[Main Branch] --> CI[GitHub Actions CI/CD]
+  CI --> SEC[TruffleHog + CodeQL + Trivy]
+  SEC --> BUILD[Docker Build + GHCR]
+  BUILD --> STAGE[Staging Environment Approval]
+  STAGE --> DEPLOY_S[Remote Deploy + Smoke Test]
+  DEPLOY_S --> PROD[Production Environment Approval]
+  PROD --> DEPLOY_P[Remote Deploy + Smoke Test]
+  DEPLOY_P --> ROLLBACK[Auto Rollback on Smoke Failure]
 ```
 
 ## Chat Streaming Flow
@@ -93,7 +108,7 @@ Current chat safety behavior:
 ## PR4 Guardrails (CI/CD Security + Controlled Promotion)
 
 Implemented CI/CD security gates and controlled promotion:
-- Verified secret leak scan via TruffleHog (`--results=verified --fail`)
+- Verified secret leak scan via TruffleHog (`--results=verified`)
 - SAST via CodeQL (`javascript-typescript`)
 - Container vulnerability scan via Trivy on API + web images (`HIGH,CRITICAL`)
 - Environment-scoped deploy jobs (`staging` then `production`) with approvals
@@ -101,11 +116,13 @@ Implemented CI/CD security gates and controlled promotion:
 
 ## Stack
 
-- Frontend: React + Vite + TypeScript + Tailwind
-- Backend: Node.js + Express + TypeScript
-- Database: PostgreSQL (`DATABASE_URL`)
-- Vector store: ChromaDB (`CHROMA_URL`)
-- LLM: Gemini (primary) / OpenAI (fallback)
+- Frontend: React 18 + Vite 6 + TypeScript 5 + Tailwind CSS
+- Backend: Node.js 20 + Express 4 + TypeScript 5
+- Data: PostgreSQL 16 + Drizzle ORM (current migration flow uses `drizzle-kit push`)
+- Retrieval: ChromaDB 0.5.x (`CHROMA_URL`) with in-memory fallback outside production
+- GenAI Providers: Gemini 1.5 Flash (primary) and OpenAI `gpt-4o-mini` (fallback)
+- Containers: API on `node:20-alpine` (non-root runtime), web on `nginx:1.29-alpine`
+- CI/CD: GitHub Actions with TruffleHog, CodeQL, Trivy, GHCR image publishing, staged promotion (`staging` -> `production`)
 
 ## Local Development
 
