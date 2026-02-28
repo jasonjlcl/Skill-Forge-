@@ -15,7 +15,14 @@ export interface RetrievedChunk extends TrainingChunk {
 
 export interface VectorStore {
   upsert(chunks: TrainingChunk[]): Promise<void>;
-  query(input: { query: string; topK: number; module?: string }): Promise<RetrievedChunk[]>;
+  query(input: VectorStoreQueryInput): Promise<RetrievedChunk[]>;
+}
+
+export interface VectorStoreQueryInput {
+  query: string;
+  topK: number;
+  module?: string;
+  minScore?: number;
 }
 
 interface IndexedChunk extends TrainingChunk {
@@ -55,8 +62,9 @@ export class InMemoryVectorStore implements VectorStore {
     }
   }
 
-  async query(input: { query: string; topK: number; module?: string }): Promise<RetrievedChunk[]> {
+  async query(input: VectorStoreQueryInput): Promise<RetrievedChunk[]> {
     const queryEmbedding = embedText(input.query);
+    const minScore = Math.max(0, Math.min(1, input.minScore ?? 0));
 
     const candidates = [...this.chunks.values()].filter(
       (chunk) => !input.module || chunk.module === input.module,
@@ -67,6 +75,7 @@ export class InMemoryVectorStore implements VectorStore {
         ...chunk,
         score: cosineSimilarity(queryEmbedding, chunk.embedding),
       }))
+      .filter((chunk) => chunk.score >= minScore)
       .sort((a, b) => b.score - a.score)
       .slice(0, Math.max(1, input.topK))
       .map((chunk) => {
@@ -79,6 +88,7 @@ export class InMemoryVectorStore implements VectorStore {
 
 class ChromaVectorStore implements VectorStore {
   private readonly fallback = new InMemoryVectorStore();
+  private readonly allowFallback = env.NODE_ENV !== 'production';
   private collectionReady: Promise<ChromaCollection> | null = null;
 
   private async getCollection(): Promise<ChromaCollection> {
@@ -115,12 +125,19 @@ class ChromaVectorStore implements VectorStore {
           ...chunk.metadata,
         })),
       });
-    } catch {
-      // fall back to in-memory behavior when Chroma is unavailable
+    } catch (error) {
+      if (!this.allowFallback) {
+        throw new Error(
+          `Chroma upsert failed in production: ${error instanceof Error ? error.message : 'Unknown Chroma error'}`,
+        );
+      }
+      // fall back to in-memory behavior when Chroma is unavailable in non-production environments
     }
   }
 
-  async query(input: { query: string; topK: number; module?: string }): Promise<RetrievedChunk[]> {
+  async query(input: VectorStoreQueryInput): Promise<RetrievedChunk[]> {
+    const minScore = Math.max(0, Math.min(1, input.minScore ?? 0));
+
     try {
       const collection = await this.getCollection();
       const result = await collection.query({
@@ -134,15 +151,22 @@ class ChromaVectorStore implements VectorStore {
       const metadatas = result.metadatas?.[0] ?? [];
       const distances = result.distances?.[0] ?? [];
 
-      return ids.map((id: string, index: number) => ({
-        id,
-        text: docs[index] ?? '',
-        module: (metadatas[index]?.module as string) ?? input.module ?? 'General Onboarding',
-        source: (metadatas[index]?.source as string) ?? 'unknown',
-        metadata: metadatas[index] ?? {},
-        score: distances[index] !== undefined ? 1 / (1 + distances[index]) : 0,
-      }));
-    } catch {
+      return ids
+        .map((id: string, index: number) => ({
+          id,
+          text: docs[index] ?? '',
+          module: (metadatas[index]?.module as string) ?? input.module ?? 'General Onboarding',
+          source: (metadatas[index]?.source as string) ?? 'unknown',
+          metadata: metadatas[index] ?? {},
+          score: distances[index] !== undefined ? 1 / (1 + distances[index]) : 0,
+        }))
+        .filter((chunk) => chunk.score >= minScore);
+    } catch (error) {
+      if (!this.allowFallback) {
+        throw new Error(
+          `Chroma query failed in production: ${error instanceof Error ? error.message : 'Unknown Chroma error'}`,
+        );
+      }
       return this.fallback.query(input);
     }
   }
@@ -153,6 +177,10 @@ let activeVectorStore: VectorStore | null = null;
 export const createVectorStore = (): VectorStore => {
   if (env.CHROMA_URL) {
     return new ChromaVectorStore();
+  }
+
+  if (env.NODE_ENV === 'production') {
+    throw new Error('Chroma vector store is required in production. Ensure CHROMA_URL is configured.');
   }
 
   return new InMemoryVectorStore();

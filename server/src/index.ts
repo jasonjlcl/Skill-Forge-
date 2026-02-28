@@ -2,22 +2,59 @@ import { createServer } from 'node:http';
 import { createApp } from './app.js';
 import { env } from './config/env.js';
 import { closeDatabase } from './db/index.js';
+import { getHealthSnapshot } from './services/health.js';
 import { closeAllSseConnections, getSseConnectionCount } from './services/sseRegistry.js';
 
 const app = createApp();
 const server = createServer(app);
 
-server.listen(env.PORT, () => {
-  console.log(
-    JSON.stringify({
-      level: 'info',
-      message: 'server_started',
-      timestamp: new Date().toISOString(),
-      port: env.PORT,
-      nodeEnv: env.NODE_ENV,
-    }),
-  );
-});
+const verifyProductionDependencies = async (): Promise<void> => {
+  if (env.NODE_ENV !== 'production') {
+    return;
+  }
+
+  const snapshot = await getHealthSnapshot();
+  if (snapshot.status !== 'ok') {
+    console.error(
+      JSON.stringify({
+        level: 'error',
+        message: 'dependency_check_failed',
+        timestamp: new Date().toISOString(),
+        dependencies: snapshot.dependencies,
+      }),
+    );
+    throw new Error('Required production dependencies are unavailable');
+  }
+};
+
+const bootstrap = async (): Promise<void> => {
+  try {
+    await verifyProductionDependencies();
+    server.listen(env.PORT, () => {
+      console.log(
+        JSON.stringify({
+          level: 'info',
+          message: 'server_started',
+          timestamp: new Date().toISOString(),
+          port: env.PORT,
+          nodeEnv: env.NODE_ENV,
+        }),
+      );
+    });
+  } catch (error) {
+    console.error(
+      JSON.stringify({
+        level: 'error',
+        message: 'server_start_failed',
+        timestamp: new Date().toISOString(),
+        error: error instanceof Error ? error.message : 'Unknown startup error',
+      }),
+    );
+    process.exit(1);
+  }
+};
+
+void bootstrap();
 
 let isShuttingDown = false;
 

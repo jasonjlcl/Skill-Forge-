@@ -3,6 +3,8 @@ import { z } from 'zod';
 
 dotenv.config();
 
+const MIN_PRODUCTION_SECRET_LENGTH = 32;
+
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().default(4000),
@@ -14,18 +16,23 @@ const envSchema = z.object({
   POSTGRES_DB: z.string().optional(),
   GEMINI_API_KEY: z.string().optional(),
   OPENAI_API_KEY: z.string().optional(),
-  JWT_SECRET: z.string().min(16, 'JWT_SECRET must be at least 16 characters').default('dev-secret-change-me'),
+  JWT_SECRET: z.string().optional(),
   RATE_LIMIT_MAX: z.coerce.number().default(200),
+  AUTH_RATE_LIMIT_MAX: z.coerce.number().default(20),
+  LOGIN_MAX_ATTEMPTS: z.coerce.number().default(5),
+  LOGIN_LOCKOUT_MINUTES: z.coerce.number().default(15),
   REQUEST_BODY_LIMIT: z.string().default('2mb'),
   CORS_ORIGIN: z.string().optional(),
   CLIENT_URL: z.string().default('http://localhost:5173'),
   CHROMA_URL: z.string().optional(),
   CHROMA_COLLECTION: z.string().default('training_documents'),
+  RAG_TOP_K: z.coerce.number().default(4),
+  RAG_MIN_SCORE: z.coerce.number().min(0).max(1).default(0.05),
+  RAG_MAX_CONTEXT_CHARS: z.coerce.number().default(4000),
+  RAG_REQUIRE_CONTEXT: z.enum(['true', 'false']).default('true'),
+  STREAM_REQUEST_TTL_SECONDS: z.coerce.number().default(120),
   SHUTDOWN_TIMEOUT_MS: z.coerce.number().default(15000),
-  COOKIE_SECURE: z
-    .union([z.literal('true'), z.literal('false')])
-    .optional()
-    .transform((value) => value === 'true'),
+  COOKIE_SECURE: z.enum(['true', 'false']).optional(),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -51,13 +58,60 @@ const buildDatabaseUrl = (data: z.infer<typeof envSchema>): string | undefined =
   return `postgresql://${username}:${password}@${host}:${port}/${data.POSTGRES_DB}`;
 };
 
+const looksWeakSecret = (value: string): boolean =>
+  value.length < MIN_PRODUCTION_SECRET_LENGTH || /change-me|dev-secret/i.test(value);
+
+const resolveJwtSecret = (input: string | undefined, nodeEnv: z.infer<typeof envSchema>['NODE_ENV']): string => {
+  if (nodeEnv === 'production') {
+    if (!input) {
+      throw new Error('JWT_SECRET is required in production');
+    }
+    if (looksWeakSecret(input)) {
+      throw new Error(
+        `JWT_SECRET must be at least ${MIN_PRODUCTION_SECRET_LENGTH} characters and not use placeholder values in production`,
+      );
+    }
+    return input;
+  }
+
+  if (input && input.length >= 16) {
+    return input;
+  }
+
+  return 'dev-secret-change-me';
+};
+
+const parsedData = parsed.data;
+const builtDatabaseUrl = buildDatabaseUrl(parsedData);
+const jwtSecret = resolveJwtSecret(parsedData.JWT_SECRET, parsedData.NODE_ENV);
+
+if (parsedData.NODE_ENV === 'production' && !builtDatabaseUrl) {
+  throw new Error('DATABASE_URL (or POSTGRES_* variables) is required in production');
+}
+
+if (parsedData.NODE_ENV === 'production' && !parsedData.CHROMA_URL) {
+  throw new Error('CHROMA_URL is required in production');
+}
+
 export const env = {
-  ...parsed.data,
-  DATABASE_URL: buildDatabaseUrl(parsed.data),
-  POSTGRES_HOST: parsed.data.POSTGRES_HOST ?? 'localhost',
-  POSTGRES_PORT: parsed.data.POSTGRES_PORT ?? 5432,
-  cookieSecure: parsed.data.COOKIE_SECURE ?? parsed.data.NODE_ENV === 'production',
-  corsOrigins: (parsed.data.CORS_ORIGIN ?? parsed.data.CLIENT_URL)
+  ...parsedData,
+  DATABASE_URL: builtDatabaseUrl,
+  JWT_SECRET: jwtSecret,
+  POSTGRES_HOST: parsedData.POSTGRES_HOST ?? 'localhost',
+  POSTGRES_PORT: parsedData.POSTGRES_PORT ?? 5432,
+  cookieSecure:
+    parsedData.COOKIE_SECURE !== undefined
+      ? parsedData.COOKIE_SECURE === 'true'
+      : parsedData.NODE_ENV === 'production',
+  ragTopK: Math.max(1, Math.floor(parsedData.RAG_TOP_K)),
+  ragMinScore: parsedData.RAG_MIN_SCORE,
+  ragMaxContextChars: Math.max(600, Math.floor(parsedData.RAG_MAX_CONTEXT_CHARS)),
+  ragRequireContext: parsedData.RAG_REQUIRE_CONTEXT === 'true',
+  authRateLimitMax: Math.max(1, Math.floor(parsedData.AUTH_RATE_LIMIT_MAX)),
+  loginMaxAttempts: Math.max(1, Math.floor(parsedData.LOGIN_MAX_ATTEMPTS)),
+  loginLockoutMinutes: Math.max(1, Math.floor(parsedData.LOGIN_LOCKOUT_MINUTES)),
+  streamRequestTtlSeconds: Math.max(10, Math.floor(parsedData.STREAM_REQUEST_TTL_SECONDS)),
+  corsOrigins: (parsedData.CORS_ORIGIN ?? parsedData.CLIENT_URL)
     .split(',')
     .map((origin) => origin.trim())
     .filter(Boolean),

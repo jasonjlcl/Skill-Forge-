@@ -11,6 +11,10 @@ export const createStore = (): DataStore => {
     return createPostgresStore();
   }
 
+  if (env.NODE_ENV === 'production') {
+    throw new Error('Postgres store is required in production. Ensure DATABASE_URL is configured.');
+  }
+
   return createInMemoryStore();
 };
 
