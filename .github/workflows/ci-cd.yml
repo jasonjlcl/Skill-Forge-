@@ -5,13 +5,68 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      promote_to:
+        description: Target environment for deployment
+        required: true
+        type: choice
+        default: staging
+        options:
+          - staging
+          - production
+      deploy_ref:
+        description: Git ref to deploy (branch, tag, or SHA)
+        required: true
+        type: string
+        default: main
 
 jobs:
+  secret-scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_ref || github.sha }}
+          fetch-depth: 0
+
+      - name: Scan for verified leaked secrets
+        uses: trufflesecurity/trufflehog@v3.93.6
+        with:
+          extra_args: --results=verified --fail
+
+  sast:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_ref || github.sha }}
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@v3
+
   quality:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_ref || github.sha }}
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -37,6 +92,41 @@ jobs:
       - name: Build
         run: npm run build
 
+  container-scan:
+    runs-on: ubuntu-latest
+    needs: quality
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_ref || github.sha }}
+
+      - name: Build API image for scan
+        run: docker build -f server/Dockerfile --target runner -t local/genai-api:${{ github.sha }} .
+
+      - name: Build Web image for scan
+        run: docker build -f infra/nginx/Dockerfile --build-arg VITE_API_BASE=/api -t local/genai-web:${{ github.sha }} .
+
+      - name: Scan API image for HIGH/CRITICAL vulns
+        uses: aquasecurity/trivy-action@0.33.1
+        with:
+          image-ref: local/genai-api:${{ github.sha }}
+          format: table
+          exit-code: '1'
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+
+      - name: Scan Web image for HIGH/CRITICAL vulns
+        uses: aquasecurity/trivy-action@0.33.1
+        with:
+          image-ref: local/genai-web:${{ github.sha }}
+          format: table
+          exit-code: '1'
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+
   rag-eval:
     runs-on: ubuntu-latest
     needs: quality
@@ -44,6 +134,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_ref || github.sha }}
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -62,7 +154,11 @@ jobs:
 
   docker-build:
     runs-on: ubuntu-latest
-    needs: quality
+    needs:
+      - secret-scan
+      - sast
+      - quality
+      - container-scan
     permissions:
       contents: read
       packages: write
@@ -73,6 +169,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_ref || github.sha }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -108,12 +206,145 @@ jobs:
           build-args: |
             VITE_API_BASE=/api
 
-  deploy-template:
+  deploy-staging:
     runs-on: ubuntu-latest
-    needs: docker-build
-    if: github.event_name == 'workflow_dispatch'
+    needs:
+      - secret-scan
+      - sast
+      - quality
+      - container-scan
+      - docker-build
+    if: github.event_name == 'workflow_dispatch' && (inputs.promote_to == 'staging' || inputs.promote_to == 'production')
+    environment:
+      name: staging
+    permissions:
+      contents: read
+    outputs:
+      staging_previous_ref: ${{ steps.staging_ref.outputs.value }}
     steps:
-      - name: Deploy template instructions
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Configure SSH access
         run: |
-          echo "Add SSH_HOST, SSH_USER, SSH_KEY, and DEPLOY_PATH secrets."
-          echo "Then run: ssh <host> 'cd <path> && git pull && docker compose --env-file .env.production -f docker-compose.prod.yml up -d --build'"
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "${{ secrets.SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Capture currently deployed staging ref
+        id: staging_ref
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+        run: |
+          CURRENT_REF="$(ssh -i ~/.ssh/deploy_key "$SSH_USER@$SSH_HOST" "cd '$DEPLOY_PATH' && git rev-parse HEAD")"
+          echo "value=$CURRENT_REF" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy staging
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          DEPLOY_REF: ${{ inputs.deploy_ref }}
+          ENV_FILE: ${{ vars.DEPLOY_ENV_FILE }}
+          ENABLE_HTTPS: ${{ vars.ENABLE_HTTPS }}
+          SSH_KEY_PATH: ~/.ssh/deploy_key
+        run: sh scripts/prod/deploy-remote.sh
+
+      - name: Run staging smoke test
+        env:
+          SMOKE_BASE_URL: ${{ secrets.SMOKE_BASE_URL }}
+        run: |
+          if [ -z "$SMOKE_BASE_URL" ]; then
+            echo "SMOKE_BASE_URL secret is required."
+            exit 1
+          fi
+          node scripts/auth-smoke.mjs "$SMOKE_BASE_URL"
+
+  deploy-production:
+    runs-on: ubuntu-latest
+    needs: deploy-staging
+    if: github.event_name == 'workflow_dispatch' && inputs.promote_to == 'production'
+    environment:
+      name: production
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Configure SSH access
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "${{ secrets.SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Capture currently deployed production ref
+        id: prod_ref
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+        run: |
+          CURRENT_REF="$(ssh -i ~/.ssh/deploy_key "$SSH_USER@$SSH_HOST" "cd '$DEPLOY_PATH' && git rev-parse HEAD")"
+          echo "value=$CURRENT_REF" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy production
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          DEPLOY_REF: ${{ inputs.deploy_ref }}
+          ENV_FILE: ${{ vars.DEPLOY_ENV_FILE }}
+          ENABLE_HTTPS: ${{ vars.ENABLE_HTTPS }}
+          SSH_KEY_PATH: ~/.ssh/deploy_key
+        run: sh scripts/prod/deploy-remote.sh
+
+      - name: Run production smoke test
+        id: smoke
+        continue-on-error: true
+        env:
+          SMOKE_BASE_URL: ${{ secrets.SMOKE_BASE_URL }}
+        run: |
+          if [ -z "$SMOKE_BASE_URL" ]; then
+            echo "SMOKE_BASE_URL secret is required."
+            exit 1
+          fi
+          node scripts/auth-smoke.mjs "$SMOKE_BASE_URL"
+
+      - name: Auto rollback when smoke fails
+        if: steps.smoke.outcome == 'failure'
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          ROLLBACK_REF: ${{ steps.prod_ref.outputs.value }}
+          ENV_FILE: ${{ vars.DEPLOY_ENV_FILE }}
+          ENABLE_HTTPS: ${{ vars.ENABLE_HTTPS }}
+          SSH_KEY_PATH: ~/.ssh/deploy_key
+        run: sh scripts/prod/rollback-remote.sh
+
+      - name: Fail deployment after rollback
+        if: steps.smoke.outcome == 'failure'
+        run: |
+          echo "::error::Production smoke test failed. Rollback completed to ref ${{ steps.prod_ref.outputs.value }}."
+          exit 1
+
+      - name: Mark deployment success
+        run: |
+          echo "Production deploy and smoke test succeeded."

@@ -90,6 +90,15 @@ Current chat safety behavior:
 - `meta` SSE event includes source trust/risk tags for retrieved context
 - `done` SSE event includes moderation decision metadata (`allow`/`reframe`/`block`)
 
+## PR4 Guardrails (CI/CD Security + Controlled Promotion)
+
+Implemented CI/CD security gates and controlled promotion:
+- Verified secret leak scan via TruffleHog (`--results=verified --fail`)
+- SAST via CodeQL (`javascript-typescript`)
+- Container vulnerability scan via Trivy on API + web images (`HIGH,CRITICAL`)
+- Environment-scoped deploy jobs (`staging` then `production`) with approvals
+- Post-deploy smoke test (`scripts/auth-smoke.mjs`) and automated production rollback
+
 ## Stack
 
 - Frontend: React + Vite + TypeScript + Tailwind
@@ -199,3 +208,27 @@ npm run docker:prod:up
 ### Shared Hosting (cPanel/CloudLinux)
 
 Shared hosting usually cannot run Docker/Postgres/Chroma locally. The app can still run, but production persistence/retrieval requires managed external services.
+
+## Controlled Promotion Workflow
+
+The CI workflow supports manual promotion via `workflow_dispatch`:
+
+1. Choose `promote_to=staging` or `promote_to=production`.
+2. Set `deploy_ref` (branch/tag/SHA) to deploy.
+3. `staging` deploy runs first for any production promotion.
+4. `production` deploy runs only after staging passes.
+5. Production smoke failure triggers automatic rollback to the previously deployed commit.
+
+Required GitHub environment secrets (set for both `staging` and `production`):
+- `SSH_HOST`
+- `SSH_USER`
+- `SSH_KEY`
+- `DEPLOY_PATH`
+- `SMOKE_BASE_URL`
+
+Optional GitHub environment variables:
+- `DEPLOY_ENV_FILE` (default `.env.production`)
+- `ENABLE_HTTPS` (`true` to include `docker-compose.https.yml`)
+
+Rollback runbook:
+- [`docs/ROLLBACK_PLAYBOOK.md`](./docs/ROLLBACK_PLAYBOOK.md)
