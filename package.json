@@ -27,6 +27,7 @@
     "format": "prettier --write .",
     "ingest": "tsx scripts/ingest.ts",
     "eval:rag": "tsx scripts/eval-rag.ts",
+    "eval:rag:ci": "npm run eval:rag",
     "smoke:auth": "node scripts/auth-smoke.mjs"
   },
   "devDependencies": {
