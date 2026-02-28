@@ -1,45 +1,59 @@
 # Production Readiness Review - AI Chatbot Webapp
 
-Date: 2026-02-28
+Date (baseline): 2026-02-28
+Last Updated: 2026-03-01
 Reviewer: Staff/Principal Engineering Review (evidence-based)
 
 ## Executive Summary
 
-Overall, the app is solid for a production MVP, but not yet enterprise-grade.
+Current state (2026-03-01): the app is production MVP-ready with validated staged promotion. GitHub Actions `workflow_dispatch` runs `#31` (staging) and `#32` (production) both completed successfully on 2026-02-28 UTC.
 
-Top 5 issues to address first:
-1. **Async error handling gap in Express routes** can crash request workers under provider/vector failures.
-2. **No explicit token/cost controls** on LLM calls (`max_tokens`/budgeting/cost telemetry absent).
-3. **No AI safety enforcement layer** (moderation/prompt-injection defenses beyond prompt wording).
-4. **Observability is logging-only** (no metrics/tracing/SLO alerting).
-5. **Schema lifecycle is non-versioned** (`drizzle-kit push`), weak for audited change control.
+Top 5 remaining issues to address next:
+1. **Stream registry is in-process memory only** (`chatStreamRegistry`), so it is not horizontally safe.
+2. **Migration apply flow remains non-versioned** (`drizzle-kit push`), limiting audited change control.
+3. **Observability is still logging-first** (no metrics/tracing/SLO instrumentation).
+4. **Governance/privacy controls are incomplete** (retention/export/delete endpoints not implemented).
+5. **Resilience/retrieval maturity gaps remain** (no bounded retry/circuit-breaker policy; lexical-hash embedding quality ceiling).
 
-Quick wins implemented during this review:
-- Sanitized request/error logged URLs to remove query strings.
-  - `server/src/middleware/logging.ts:9`
-  - `server/src/middleware/error.ts:4`
-- Added configurable LLM request timeout with sane default (`LLM_TIMEOUT_MS=20000`).
-  - `server/src/config/env.ts:33`
-  - `server/src/services/gemini.ts:32`
-  - `.env.example`
-  - `.env.production.example`
-  - `docker-compose.prod.yml`
+Major improvements completed since baseline:
+- PR1 delivered async error boundaries, LLM output cap/context budgeting enforcement, and DB hot-path indexes.
+- PR2 delivered context sanitization/risk tagging, output moderation, and baseline RAG evaluation script + CI job.
+- PR4 delivered CI security gates (TruffleHog, CodeQL, Trivy), controlled promotion workflow, smoke testing, and rollback path.
+- API container hardening now runs as non-root (`USER app`), and container scan blockers were resolved.
 
 ## Readiness Score (0-10)
 
-Final score: **7.3 / 10**
+Final score: **8.4 / 10**
 
 Rubric:
-- Security & Privacy: 1.3 / 2.0
-- Reliability & Correctness: 1.2 / 2.0
-- Observability: 0.8 / 2.0
-- Performance & Cost Control: 1.3 / 2.0
-- AI Quality & Safety: 1.0 / 2.0
-- Deployment/CI/CD/Maintainability modifiers: +1.7 / 2.0
+- Security & Privacy: 1.6 / 2.0
+- Reliability & Correctness: 1.5 / 2.0
+- Observability: 0.9 / 2.0
+- Performance & Cost Control: 1.6 / 2.0
+- AI Quality & Safety: 1.5 / 2.0
+- Deployment/CI/CD/Maintainability modifiers: +1.3 / 2.0
 
 Interpretation:
-- Good production MVP posture for controlled traffic.
-- Not yet enterprise-ready due to safety, observability, and controlled change-management gaps.
+- Strong production MVP posture with staged promotion and security gates operational.
+- Not yet enterprise-ready due to observability, governance/privacy, and horizontal-scale architecture gaps.
+
+## Status Update Since Baseline (2026-03-01)
+
+Resolved since 2026-02-28:
+- F-REL-01 async error boundary gap.
+- F-PERF-01 and F-PERF-02 output/context budget enforcement.
+- F-PERF-04 DB indexing gaps on key hot paths.
+- F-AI-01, F-AI-02, and F-AI-03 safety layer + prompt-injection sanitization + RAG eval script.
+- F-CI-01 and F-CI-02 CI security scanning and controlled promotion workflow.
+- F-DEP-02 container runtime non-root hardening.
+- F-DEP-03 and F-MNT-01 documentation drift on architecture/security guidance.
+
+Still open:
+- F-REL-02 stream registry durability/horizontal scaling.
+- F-REL-04 versioned migration apply workflow.
+- F-OBS-01 and F-OBS-02 metrics/tracing/SLO and chat correlation enrichment.
+- F-SEC-02 privacy governance endpoints/retention policy enforcement.
+- F-PERF-03 semantic embedding quality upgrade.
 
 ## Phase A - Architecture & Data Flow Discovery
 
@@ -102,17 +116,18 @@ Commands executed:
 - `npm run test`
 - `npm run build`
 - `npm run audit`
+- `npm run eval:rag`
 
 Results:
 - Lint: pass
-- Tests: pass (3 suites, 7 tests)
+- Tests: pass
 - Build: pass (server + client)
+- RAG eval: pass
 - Audit: pass at configured threshold, but 1 low vulnerability remains (`qs` advisory)
 
-Notes:
-- `package.json` references `eval:rag` => `scripts/eval-rag.ts`, but file is missing.
+## Phase C - Findings by Category (Baseline Snapshot 2026-02-28)
 
-## Phase C - Findings by Category
+Note: Findings below are the original baseline snapshot. Refer to "Status Update Since Baseline (2026-03-01)" for current resolution state.
 
 ## Security & Privacy
 
@@ -365,27 +380,23 @@ Recommended fix:
 - CI quality gate + dependency audit:
   - `.github/workflows/ci-cd.yml`
 
-## Now / Next / Later Roadmap
+## Now / Next / Later Roadmap (Updated 2026-03-01)
 
-Now (1-2 weeks, high impact)
-- Add async route error wrapper globally (S)
-- Add LLM output caps + prompt context truncation by `ragMaxContextChars` (S)
-- Add `(session_id, created_at)` and quiz-path indexes (S)
-- Fix CSP/font mismatch by self-hosting fonts (S)
-- Update README/API docs to current stream + JWT requirements (S)
+Now (1-3 weeks, highest impact)
+- PR3: add metrics/tracing/SLO skeleton and chat correlation fields (`sessionId`, `streamId`).
+- PR5: implement governance/privacy controls (retention, user export/delete endpoints, audit trail events).
+- Replace in-memory stream registry with Redis-backed TTL registry (or single-step authenticated stream endpoint).
+- Replace `drizzle-kit push` runtime migration flow with versioned SQL apply workflow.
 
-Next (2-6 weeks)
-- Add moderation/safety gate for model output (M)
-- Add prompt-injection defenses and retrieval trust policy (M)
-- Add metrics + traces + SLO dashboards/alerts (M)
-- Replace `drizzle-kit push` with versioned migration workflow (M)
-- Implement Redis-backed stream request registry for horizontal scale (M)
+Next (3-8 weeks)
+- Add bounded retry/backoff and circuit-breaker policy for provider/vector dependencies.
+- Upgrade retrieval quality with semantic embedding provider and cache/batch ingestion strategy.
+- Tighten deployment compliance posture (attestations/signing, protected deployment policies, stricter branch protections).
 
-Later (6+ weeks)
-- Semantic embedding provider + retrieval evaluator in CI (M/L)
-- Full CI security stack (secret scan, SAST, image scan) (M)
-- Automated staged deploy with approvals + rollback hooks (M)
-- Data governance features (export/delete retention policy automation) (L)
+Later (8+ weeks)
+- Move RAG eval from non-blocking to policy-gated once baseline is stable.
+- Define and enforce target SLOs with paging thresholds and error-budget policy.
+- Extend governance controls to include scheduled data lifecycle jobs and compliance reporting.
 
 ## Minimum Safe-to-Ship Baseline Checklist
 
@@ -393,16 +404,20 @@ Later (6+ weeks)
 - [x] Auth cookie + CSRF + lockout + token revocation
 - [x] Production fail-fast on missing DB/Chroma/JWT secret
 - [x] URL query values not logged by backend logger
-- [ ] Async route errors centrally captured without process instability
-- [ ] LLM output token caps and context budget enforcement
-- [ ] Basic safety/moderation gate before user-visible output
-- [ ] DB indexes for message/session hot paths
-- [ ] CI secret scanning + container vuln scanning
+- [x] Async route errors centrally captured without process instability
+- [x] LLM output token caps and context budget enforcement
+- [x] Basic safety/moderation gate before user-visible output
+- [x] DB indexes for message/session hot paths
+- [x] CI secret scanning + container vuln scanning
+- [x] Staged deploy with environment approvals and smoke validation
 - [ ] Versioned migrations with approval gates
+- [ ] Stream registry durable across replicas/restarts
+- [ ] Metrics/traces/SLO alerting in production
+- [ ] Governance privacy endpoints (export/delete/retention)
 
 ## Phase D - Summary of modifications made in this review
 
-Implemented:
+Implemented in baseline review:
 - `server/src/middleware/logging.ts` - sanitize logged URL path (drop query values)
 - `server/src/middleware/error.ts` - sanitize logged URL path (drop query values)
 - `server/src/config/env.ts` - add `LLM_TIMEOUT_MS` and `llmTimeoutMs`
@@ -410,7 +425,16 @@ Implemented:
 - `.env.example` / `.env.production.example` - add `LLM_TIMEOUT_MS`
 - `docker-compose.prod.yml` - pass `LLM_TIMEOUT_MS` to API container
 
+Additional implemented through 2026-03-01:
+- PR1 (reliability/cost): async wrapper, output/context guardrails, DB indexes, tests.
+- PR2 (AI safety/RAG): output moderation, prompt-injection sanitization/tagging, `scripts/eval-rag.ts`, CI rag-eval job.
+- PR4 (CI/CD): TruffleHog + CodeQL + Trivy gates, staged approvals, smoke test, rollback automation.
+- Container hardening: API runtime switched to non-root user.
+- Deployment validation: successful staging + production promotions (`run #31` and `run #32` on 2026-02-28 UTC).
+
 Validation after changes:
 - `npm run lint` passed
 - `npm run test` passed
 - `npm run build` passed
+- `npm run eval:rag` passed
+- `npm run audit` passed (1 low advisory remains: `qs`)
