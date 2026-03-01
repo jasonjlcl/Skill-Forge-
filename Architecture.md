@@ -94,6 +94,7 @@ sequenceDiagram
 - `GET /api/privacy/export`
 - `POST /api/privacy/retention/run`
 - `DELETE /api/privacy`
+- `POST /api/internal/retention/run` (scheduler automation endpoint with bearer/OIDC auth)
 
 ## Database Hot-Path Indexes
 

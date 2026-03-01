@@ -11,6 +11,7 @@ import { errorHandler, notFoundHandler } from './middleware/error.js';
 import { requestLogger } from './middleware/logging.js';
 import { createAuthRouter } from './routes/auth.js';
 import { createChatRouter } from './routes/chat.js';
+import { createInternalRouter } from './routes/internal.js';
 import { createMeRouter } from './routes/me.js';
 import { createPrivacyRouter } from './routes/privacy.js';
 import { createQuizRouter } from './routes/quiz.js';
@@ -135,18 +136,21 @@ export const createApp = (overrides: AppOverrides = {}) => {
   const quizRouter = createQuizRouter(deps);
   const meRouter = createMeRouter(deps);
   const privacyRouter = createPrivacyRouter(deps);
+  const internalRouter = createInternalRouter(deps);
 
   app.use('/auth', authRouter);
   app.use('/chat', chatRouter);
   app.use('/quiz', quizRouter);
   app.use('/me', meRouter);
   app.use('/privacy', privacyRouter);
+  app.use('/internal', internalRouter);
 
   app.use('/api/auth', authRouter);
   app.use('/api/chat', chatRouter);
   app.use('/api/quiz', quizRouter);
   app.use('/api/me', meRouter);
   app.use('/api/privacy', privacyRouter);
+  app.use('/api/internal', internalRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

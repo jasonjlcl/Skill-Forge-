@@ -92,6 +92,8 @@ const buildTestApp = () => {
       streamRequestTtlSeconds: 120,
       DATA_RETENTION_DAYS: 30,
       dataRetentionDays: 30,
+      RETENTION_JOB_AUTH_TOKEN: 'test-retention-token',
+      retentionJobAuthToken: 'test-retention-token',
       CLIENT_URL: 'http://localhost:5173',
       CHROMA_URL: undefined,
       CHROMA_COLLECTION: 'test_collection',
@@ -326,6 +328,44 @@ describe('API', () => {
       .expect(204);
 
     await request(app).get('/auth/me').set('Cookie', cookieHeader).expect(401);
+  });
+
+  it('runs internal retention job with bearer token auth', async () => {
+    const { app, store } = buildTestApp();
+
+    const register = await request(app)
+      .post('/auth/register')
+      .send({ email: 'internal-retention@example.com', password: 'strong-pass-123', language: 'en' })
+      .expect(201);
+    const userId = register.body.user.id as string;
+
+    const session = await store.createSession({
+      userId,
+      module: 'Old Module',
+      id: randomUUID(),
+    });
+    session.lastActiveAt = new Date(Date.now() - 45 * DAY_MS);
+    await store.createMessage({
+      sessionId: session.id,
+      role: 'user',
+      content: 'Old session message',
+    });
+
+    const response = await request(app)
+      .post('/api/internal/retention/run')
+      .set('Authorization', 'Bearer test-retention-token')
+      .send({ days: 30 })
+      .expect(200);
+
+    expect(response.body.retentionDays).toBe(30);
+    expect(response.body.purged.sessionsDeleted).toBe(1);
+    expect(response.body.purged.messagesDeleted).toBe(1);
+  });
+
+  it('rejects internal retention without bearer token', async () => {
+    const { app } = buildTestApp();
+
+    await request(app).post('/api/internal/retention/run').send({}).expect(401);
   });
 
   it('rejects authenticated mutating requests without a CSRF token', async () => {

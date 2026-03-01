@@ -193,6 +193,9 @@ Important variables:
 - `VECTOR_RETRY_MAX_ATTEMPTS`, `VECTOR_RETRY_BASE_DELAY_MS`, `VECTOR_RETRY_MAX_DELAY_MS`
 - `VECTOR_CIRCUIT_FAILURE_THRESHOLD`, `VECTOR_CIRCUIT_OPEN_MS`
 - `DATA_RETENTION_DAYS`
+- `RETENTION_JOB_AUTH_TOKEN` (optional shared-token auth for `/api/internal/retention/run`)
+- `RETENTION_JOB_OIDC_AUDIENCE` (recommended for Cloud Scheduler OIDC auth)
+- `RETENTION_JOB_ALLOWED_SERVICE_ACCOUNTS` (comma-separated allowlist for scheduler caller identities)
 
 ## API Routes
 
@@ -212,6 +215,7 @@ Primary routes:
 - `GET /privacy/export`
 - `POST /privacy/retention/run` (CSRF)
 - `DELETE /privacy` (CSRF)
+- `POST /internal/retention/run` (bearer token or OIDC, for scheduler/automation)
 - `GET /health`
 - `GET /api/health` (dependency-aware health snapshot)
 
@@ -229,6 +233,10 @@ All auth/chat/quiz/me/privacy routes are also mounted under `/api/*`.
 - `npm run eval:rag` run RAG eval script
 - `npm run eval:rag:ci` CI wrapper for the RAG eval baseline
 - `npm run retention` run retention purge workflow
+- `bash scripts/prod/gcp/install-ops-agent.sh <instance> <zone>` install/configure Ops Agent on a GCE VM
+- `bash scripts/prod/gcp/setup-monitoring.sh <host> <instance> <zone> [notification-channel-ids]` create uptime + alert policies
+- `bash scripts/prod/gcp/setup-retention-scheduler.sh <job-name> <service-url> [location] [schedule] [time-zone] [days] [service-account]` create/update scheduler retention job
+- `bash scripts/prod/gcp/setup-https-lb-cloud-armor.sh <instance> <zone> <domain> [prefix] [target-tag]` provision HTTPS LB + managed cert + Cloud Armor
 
 Docker/VPS:
 - `npm run docker:prod:up`
@@ -261,6 +269,11 @@ This project can be deployed to a GCP Compute Engine VM using the same workflow:
 - Ensure firewall rules allow `80/443` (and SSH `22` from your admin/runner paths).
 - Use the existing `workflow_dispatch` promotion flow (`staging` -> `production`).
 - Keep production secrets in GitHub environments or a secret manager; avoid long-lived local `.env.production` storage.
+
+Operational hardening helpers (optional but recommended):
+- Ops/Monitoring: install and configure Ops Agent, then create uptime + CPU/memory alert policies via `scripts/prod/gcp/install-ops-agent.sh` and `scripts/prod/gcp/setup-monitoring.sh`.
+- Scheduled retention automation: expose `/api/internal/retention/run` with OIDC audience config and create a Cloud Scheduler job using `scripts/prod/gcp/setup-retention-scheduler.sh`.
+- Edge security and TLS: provision global external HTTPS LB, Google-managed certificate, and Cloud Armor baseline policy via `scripts/prod/gcp/setup-https-lb-cloud-armor.sh`.
 
 ### Recommended Resilience Overrides (Production)
 
