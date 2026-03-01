@@ -50,6 +50,7 @@ sequenceDiagram
 - AI:
   - `services/gemini.ts` provider orchestration (Gemini -> OpenAI -> deterministic fallback).
   - `services/vectorStore.ts` retrieval and context budgeting.
+  - `services/embeddings.ts` semantic embedding provider (OpenAI) with non-prod hash fallback.
   - `services/safety.ts` context sanitization and output moderation.
 
 ## Guardrails

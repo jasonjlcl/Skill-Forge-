@@ -119,7 +119,7 @@ Implemented CI/CD security gates and controlled promotion:
 - Frontend: React 18 + Vite 6 + TypeScript 5 + Tailwind CSS
 - Backend: Node.js 20 + Express 4 + TypeScript 5
 - Data: PostgreSQL 16 + Drizzle ORM with versioned SQL migrations (`server/drizzle/*.sql`)
-- Retrieval: ChromaDB 0.5.x (`CHROMA_URL`) with in-memory fallback outside production
+- Retrieval: ChromaDB 0.5.x (`CHROMA_URL`) with semantic OpenAI embeddings (`text-embedding-3-small` default)
 - GenAI Providers: Gemini 1.5 Flash (primary) and OpenAI `gpt-4o-mini` (fallback)
 - Containers: API on `node:20-alpine` (non-root runtime), web on `nginx:1.29-alpine`
 - CI/CD: GitHub Actions with TruffleHog, CodeQL, Trivy, GHCR image publishing, staged promotion (`staging` -> `production`)
@@ -162,9 +162,12 @@ Use:
 Important variables:
 - `JWT_SECRET` (production requires strong secret, minimum 32 chars)
 - `CORS_ORIGIN`, `CLIENT_URL`
-- `GEMINI_API_KEY` and/or `OPENAI_API_KEY` (optional)
+- `GEMINI_API_KEY` and/or `OPENAI_API_KEY` (OpenAI key required in production for semantic embeddings)
 - `DATABASE_URL` (required in production)
 - `CHROMA_URL` (required in production)
+- `EMBEDDING_PROVIDER` (`openai` in production, `auto`/`hash` for local/test)
+- `OPENAI_EMBEDDING_MODEL` (default `text-embedding-3-small`)
+- `EMBEDDING_BATCH_SIZE`
 - `RAG_MAX_CONTEXT_CHARS`
 - `LLM_MAX_OUTPUT_TOKENS`
 - `LLM_TIMEOUT_MS`

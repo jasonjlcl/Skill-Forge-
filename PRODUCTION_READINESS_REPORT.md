@@ -11,7 +11,7 @@ Current state (2026-03-01): the app is production MVP-ready with validated stage
 Top 5 remaining issues to address next:
 1. **Observability is still logging-first** (no metrics/tracing/SLO instrumentation).
 2. **Governance/privacy controls are incomplete** (retention/export/delete endpoints not implemented).
-3. **Resilience/retrieval maturity gaps remain** (no bounded retry/circuit-breaker policy; lexical-hash embedding quality ceiling).
+3. **Resilience/retrieval maturity gaps remain** (no bounded retry/circuit-breaker policy around vector/provider dependencies).
 4. **RAG evaluation is still non-blocking in CI** (`continue-on-error: true`), so regressions do not block promotions.
 5. **Compliance hardening can be strengthened** (artifact attestations/signing and stricter branch/deploy protection policy).
 
@@ -23,13 +23,13 @@ Major improvements completed since baseline:
 
 ## Readiness Score (0-10)
 
-Final score: **8.4 / 10**
+Final score: **8.6 / 10**
 
 Rubric:
 - Security & Privacy: 1.6 / 2.0
 - Reliability & Correctness: 1.5 / 2.0
 - Observability: 0.9 / 2.0
-- Performance & Cost Control: 1.6 / 2.0
+- Performance & Cost Control: 1.8 / 2.0
 - AI Quality & Safety: 1.5 / 2.0
 - Deployment/CI/CD/Maintainability modifiers: +1.3 / 2.0
 
@@ -44,6 +44,7 @@ Resolved since 2026-02-28:
 - F-REL-02 stream registry durability/horizontal scaling (pending stream requests now stored in shared datastore).
 - F-REL-04 versioned migration apply workflow (versioned SQL migrations + tracked apply runner).
 - F-PERF-01 and F-PERF-02 output/context budget enforcement.
+- F-PERF-03 semantic embedding provider integration (OpenAI + batching/cache, non-prod fallback).
 - F-PERF-04 DB indexing gaps on key hot paths.
 - F-AI-01, F-AI-02, and F-AI-03 safety layer + prompt-injection sanitization + RAG eval script.
 - F-CI-01 and F-CI-02 CI security scanning and controlled promotion workflow.
@@ -53,7 +54,6 @@ Resolved since 2026-02-28:
 Still open:
 - F-OBS-01 and F-OBS-02 metrics/tracing/SLO and chat correlation enrichment.
 - F-SEC-02 privacy governance endpoints/retention policy enforcement.
-- F-PERF-03 semantic embedding quality upgrade.
 
 ## Phase A - Architecture & Data Flow Discovery
 
@@ -73,7 +73,7 @@ LLM provider calls:
 
 RAG retrieval:
 - Retrieval + vector store orchestration: `server/src/services/vectorStore.ts`
-- Embedding implementation: `server/src/services/embeddings.ts` (hashed local embedding)
+- Embedding implementation: `server/src/services/embeddings.ts` (semantic OpenAI embeddings in production; hash fallback for local/test)
 - Ingestion pipeline: `scripts/ingest.ts`
 
 Chat history/session state:
@@ -244,13 +244,17 @@ Recommended fix:
 - Enforce `ragMaxContextChars` during context assembly and truncate by score order.
 
 ### F-PERF-03 - Embedding implementation is lexical hash vector, not semantic
-Severity: Medium
-Evidence:
-- `server/src/services/embeddings.ts:1-40`
-Impact:
+Severity (baseline): Medium
+Status (2026-03-01): Resolved
+Baseline evidence:
+- `server/src/services/embeddings.ts` previously generated lexical hash vectors only.
+Current evidence:
+- Embeddings now use semantic OpenAI embedding API with batching and caching in `server/src/services/embeddings.ts`.
+- Vector-store upsert/query paths call async embedding methods (`embedTexts` / `embedText`) in `server/src/services/vectorStore.ts`.
+Historical impact:
 - Lower retrieval relevance/grounding versus production embedding models.
-Recommended fix:
-- Introduce semantic embedding provider (e.g., Vertex/OpenAI) with caching and batch ingestion.
+Resolution:
+- Integrated semantic embedding provider with configurable model and batch size, and retained hash fallback for non-production safety.
 
 ### F-PERF-04 - DB indexing gaps for chat message retrieval paths
 Severity: Medium
@@ -392,7 +396,7 @@ Now (1-3 weeks, highest impact)
 
 Next (3-8 weeks)
 - Add bounded retry/backoff and circuit-breaker policy for provider/vector dependencies.
-- Upgrade retrieval quality with semantic embedding provider and cache/batch ingestion strategy.
+- Add retrieval-quality telemetry and cost/latency budgets for embedding + query paths.
 - Tighten deployment compliance posture (attestations/signing, protected deployment policies, stricter branch protections).
 
 Later (8+ weeks)
@@ -430,6 +434,7 @@ Implemented in baseline review:
 Additional implemented through 2026-03-01:
 - PR1 (reliability/cost): async wrapper, output/context guardrails, DB indexes, tests.
 - PR2 (AI safety/RAG): output moderation, prompt-injection sanitization/tagging, `scripts/eval-rag.ts`, CI rag-eval job.
+- Retrieval quality: integrated semantic OpenAI embeddings with batching/cache and configurable provider/model settings.
 - PR4 (CI/CD): TruffleHog + CodeQL + Trivy gates, staged approvals, smoke test, rollback automation.
 - Stream request durability: moved pending stream request handling from in-process map to shared datastore persistence.
 - Migration control: replaced runtime `drizzle-kit push` usage with versioned SQL migration runner (`server/scripts/migrate.ts`) backed by `schema_migrations`.

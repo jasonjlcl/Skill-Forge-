@@ -1,4 +1,10 @@
-const VECTOR_SIZE = 256;
+import OpenAI from 'openai';
+import { env } from '../config/env.js';
+
+const HASH_VECTOR_SIZE = 256;
+const MAX_EMBED_TEXT_CHARS = 8000;
+const embeddingCache = new Map<string, number[]>();
+const openaiClient = env.OPENAI_API_KEY ? new OpenAI({ apiKey: env.OPENAI_API_KEY }) : null;
 
 const hashToken = (token: string): number => {
   let hash = 0;
@@ -15,8 +21,16 @@ const tokenize = (text: string): string[] =>
     .split(/\s+/)
     .filter((token) => token.length > 1);
 
-export const embedText = (text: string): number[] => {
-  const vector = new Array<number>(VECTOR_SIZE).fill(0);
+const normalizeVector = (vector: number[]): number[] => {
+  const norm = Math.sqrt(vector.reduce((sum, value) => sum + value * value, 0));
+  if (norm === 0) {
+    return vector;
+  }
+  return vector.map((value) => value / norm);
+};
+
+const hashEmbedText = (text: string): number[] => {
+  const vector = new Array<number>(HASH_VECTOR_SIZE).fill(0);
   const tokens = tokenize(text);
 
   if (tokens.length === 0) {
@@ -25,16 +39,101 @@ export const embedText = (text: string): number[] => {
 
   for (const token of tokens) {
     const hash = hashToken(token);
-    const index = hash % VECTOR_SIZE;
+    const index = hash % HASH_VECTOR_SIZE;
     vector[index] += 1;
   }
 
-  const norm = Math.sqrt(vector.reduce((sum, value) => sum + value * value, 0));
-  if (norm === 0) {
-    return vector;
+  return normalizeVector(vector);
+};
+
+const sanitizeInput = (text: string): string => {
+  const compact = text.replace(/\s+/g, ' ').trim();
+  return compact.length <= MAX_EMBED_TEXT_CHARS ? compact : compact.slice(0, MAX_EMBED_TEXT_CHARS);
+};
+
+const ensureOpenAiAvailable = (): void => {
+  if (openaiClient) {
+    return;
   }
 
-  return vector.map((value) => value / norm);
+  if (env.embeddingProvider === 'openai' && env.NODE_ENV === 'production') {
+    throw new Error('OPENAI_API_KEY is required for semantic embeddings in production.');
+  }
+};
+
+const embedBatchWithOpenAi = async (input: string[]): Promise<number[][]> => {
+  ensureOpenAiAvailable();
+  if (!openaiClient) {
+    return input.map((text) => hashEmbedText(text));
+  }
+
+  const response = await openaiClient.embeddings.create({
+    model: env.openaiEmbeddingModel,
+    input,
+  });
+
+  const ordered = response.data.slice().sort((a, b) => a.index - b.index).map((row) => row.embedding);
+  return ordered.map((vector) => normalizeVector(vector));
+};
+
+const embedWithConfiguredProvider = async (input: string[]): Promise<number[][]> => {
+  if (env.embeddingProvider === 'hash') {
+    return input.map((text) => hashEmbedText(text));
+  }
+
+  try {
+    return await embedBatchWithOpenAi(input);
+  } catch (error) {
+    if (env.NODE_ENV === 'production') {
+      throw new Error(
+        `Semantic embedding request failed: ${error instanceof Error ? error.message : 'Unknown embedding error'}`,
+      );
+    }
+    return input.map((text) => hashEmbedText(text));
+  }
+};
+
+export const embedTexts = async (texts: string[]): Promise<number[][]> => {
+  if (texts.length === 0) {
+    return [];
+  }
+
+  const prepared = texts.map((text) => sanitizeInput(text));
+  const result = new Array<number[]>(prepared.length);
+  const missing: string[] = [];
+  const missingIndexes: number[] = [];
+
+  for (let i = 0; i < prepared.length; i += 1) {
+    const cached = embeddingCache.get(prepared[i]);
+    if (cached) {
+      result[i] = cached;
+      continue;
+    }
+    missing.push(prepared[i]);
+    missingIndexes.push(i);
+  }
+
+  if (missing.length > 0) {
+    for (let offset = 0; offset < missing.length; offset += env.embeddingBatchSize) {
+      const batch = missing.slice(offset, offset + env.embeddingBatchSize);
+      const embeddedBatch = await embedWithConfiguredProvider(batch);
+
+      for (let index = 0; index < batch.length; index += 1) {
+        const text = batch[index];
+        const vector = embeddedBatch[index];
+        embeddingCache.set(text, vector);
+        const originalIndex = missingIndexes[offset + index];
+        result[originalIndex] = vector;
+      }
+    }
+  }
+
+  return result;
+};
+
+export const embedText = async (text: string): Promise<number[]> => {
+  const [vector] = await embedTexts([text]);
+  return vector;
 };
 
 export const cosineSimilarity = (a: number[], b: number[]): number => {

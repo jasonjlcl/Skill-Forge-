@@ -1,5 +1,5 @@
 import { env } from '../config/env.js';
-import { cosineSimilarity, embedText } from './embeddings.js';
+import { cosineSimilarity, embedText, embedTexts } from './embeddings.js';
 
 export interface TrainingChunk {
   id: string;
@@ -99,16 +99,18 @@ export class InMemoryVectorStore implements VectorStore {
   private chunks = new Map<string, IndexedChunk>();
 
   async upsert(chunks: TrainingChunk[]): Promise<void> {
-    for (const chunk of chunks) {
+    const embeddings = await embedTexts(chunks.map((chunk) => chunk.text));
+    for (let index = 0; index < chunks.length; index += 1) {
+      const chunk = chunks[index];
       this.chunks.set(chunk.id, {
         ...chunk,
-        embedding: embedText(chunk.text),
+        embedding: embeddings[index],
       });
     }
   }
 
   async query(input: VectorStoreQueryInput): Promise<RetrievedChunk[]> {
-    const queryEmbedding = embedText(input.query);
+    const queryEmbedding = await embedText(input.query);
     const minScore = Math.max(0, Math.min(1, input.minScore ?? 0));
 
     const candidates = [...this.chunks.values()].filter(
@@ -162,10 +164,11 @@ class ChromaVectorStore implements VectorStore {
 
     try {
       const collection = await this.getCollection();
+      const embeddings = await embedTexts(chunks.map((chunk) => chunk.text));
       await collection.upsert({
         ids: chunks.map((chunk) => chunk.id),
         documents: chunks.map((chunk) => chunk.text),
-        embeddings: chunks.map((chunk) => embedText(chunk.text)),
+        embeddings,
         metadatas: chunks.map((chunk) => ({
           module: chunk.module,
           source: chunk.source,
@@ -188,7 +191,7 @@ class ChromaVectorStore implements VectorStore {
     try {
       const collection = await this.getCollection();
       const result = await collection.query({
-        queryEmbeddings: [embedText(input.query)],
+        queryEmbeddings: [await embedText(input.query)],
         nResults: Math.max(1, input.topK),
         where: input.module ? { module: input.module } : undefined,
       });

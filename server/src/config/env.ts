@@ -16,6 +16,9 @@ const envSchema = z.object({
   POSTGRES_DB: z.string().optional(),
   GEMINI_API_KEY: z.string().optional(),
   OPENAI_API_KEY: z.string().optional(),
+  EMBEDDING_PROVIDER: z.enum(['auto', 'openai', 'hash']).default('auto'),
+  OPENAI_EMBEDDING_MODEL: z.string().default('text-embedding-3-small'),
+  EMBEDDING_BATCH_SIZE: z.coerce.number().default(64),
   JWT_SECRET: z.string().optional(),
   RATE_LIMIT_MAX: z.coerce.number().default(200),
   AUTH_RATE_LIMIT_MAX: z.coerce.number().default(20),
@@ -86,6 +89,12 @@ const resolveJwtSecret = (input: string | undefined, nodeEnv: z.infer<typeof env
 const parsedData = parsed.data;
 const builtDatabaseUrl = buildDatabaseUrl(parsedData);
 const jwtSecret = resolveJwtSecret(parsedData.JWT_SECRET, parsedData.NODE_ENV);
+const resolvedEmbeddingProvider =
+  parsedData.EMBEDDING_PROVIDER === 'auto'
+    ? parsedData.OPENAI_API_KEY
+      ? 'openai'
+      : 'hash'
+    : parsedData.EMBEDDING_PROVIDER;
 
 if (parsedData.NODE_ENV === 'production' && !builtDatabaseUrl) {
   throw new Error('DATABASE_URL (or POSTGRES_* variables) is required in production');
@@ -93,6 +102,12 @@ if (parsedData.NODE_ENV === 'production' && !builtDatabaseUrl) {
 
 if (parsedData.NODE_ENV === 'production' && !parsedData.CHROMA_URL) {
   throw new Error('CHROMA_URL is required in production');
+}
+
+if (parsedData.NODE_ENV === 'production' && resolvedEmbeddingProvider !== 'openai') {
+  throw new Error(
+    'Semantic embeddings are required in production. Configure OPENAI_API_KEY or set EMBEDDING_PROVIDER=openai.',
+  );
 }
 
 export const env = {
@@ -115,6 +130,9 @@ export const env = {
   loginMaxAttempts: Math.max(1, Math.floor(parsedData.LOGIN_MAX_ATTEMPTS)),
   loginLockoutMinutes: Math.max(1, Math.floor(parsedData.LOGIN_LOCKOUT_MINUTES)),
   streamRequestTtlSeconds: Math.max(10, Math.floor(parsedData.STREAM_REQUEST_TTL_SECONDS)),
+  embeddingProvider: resolvedEmbeddingProvider,
+  openaiEmbeddingModel: parsedData.OPENAI_EMBEDDING_MODEL,
+  embeddingBatchSize: Math.max(1, Math.floor(parsedData.EMBEDDING_BATCH_SIZE)),
   corsOrigins: (parsedData.CORS_ORIGIN ?? parsedData.CLIENT_URL)
     .split(',')
     .map((origin) => origin.trim())
