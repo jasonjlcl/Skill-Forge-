@@ -12,6 +12,11 @@ import {
   isTransientUpstreamError,
   type RetryOptions,
 } from './resilience.js';
+import {
+  estimateTextTokens,
+  recordTokenUsage,
+  withObservedSpan,
+} from './observability.js';
 
 const quizSchema = z.array(
   z.object({
@@ -108,6 +113,25 @@ const withTimeout = async <T>(promise: Promise<T>, timeoutMs: number, label: str
   }
 };
 
+const asRecord = (value: unknown): Record<string, unknown> | null =>
+  typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : null;
+
+const asNumber = (value: unknown): number | undefined =>
+  typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+
+const extractGeminiTokenUsage = (response: unknown): number => {
+  const responseRecord = asRecord(response);
+  const inner = asRecord(responseRecord?.response);
+  const usageMetadata = asRecord(inner?.usageMetadata);
+
+  return (
+    asNumber(usageMetadata?.totalTokenCount) ??
+    asNumber(usageMetadata?.totalTokens) ??
+    asNumber(usageMetadata?.candidatesTokenCount) ??
+    0
+  );
+};
+
 const llmRetryPolicy = (): RetryOptions => ({
   maxAttempts: env.llmRetryMaxAttempts,
   baseDelayMs: env.llmRetryBaseDelayMs,
@@ -160,26 +184,45 @@ export class GeminiLlmClient implements LlmClient {
     if (this.gemini) {
       try {
         const model = this.gemini.getGenerativeModel({ model: 'gemini-1.5-flash' });
-        const response = await executeWithResilience(
-          () =>
-            withTimeout(
-              model.generateContent({
-                generationConfig: {
-                  maxOutputTokens: env.llmMaxOutputTokens,
-                },
-                contents: [{ role: 'user', parts: [{ text: `${systemPrompt}\n\n${prompt}` }] }],
-              }),
-              env.llmTimeoutMs,
-              'Gemini request',
-            ),
+        const response = await withObservedSpan(
           {
-            circuitBreaker: geminiCircuit,
-            retry: llmRetryPolicy(),
-            shouldRecordFailure: isTransientUpstreamError,
+            spanName: 'llm.generate.gemini',
+            operation: 'llm.generate',
+            attributes: {
+              provider: 'gemini',
+              model: 'gemini-1.5-flash',
+            },
+            metricAttributes: {
+              provider: 'gemini',
+              model: 'gemini-1.5-flash',
+            },
           },
+          () =>
+            executeWithResilience(
+              () =>
+                withTimeout(
+                  model.generateContent({
+                    generationConfig: {
+                      maxOutputTokens: env.llmMaxOutputTokens,
+                    },
+                    contents: [{ role: 'user', parts: [{ text: `${systemPrompt}\n\n${prompt}` }] }],
+                  }),
+                  env.llmTimeoutMs,
+                  'Gemini request',
+                ),
+              {
+                circuitBreaker: geminiCircuit,
+                retry: llmRetryPolicy(),
+                shouldRecordFailure: isTransientUpstreamError,
+              },
+            ),
         );
-
-        return response.response.text().trim();
+        const text = response.response.text().trim();
+        recordTokenUsage({
+          provider: 'gemini',
+          tokens: extractGeminiTokenUsage(response) || estimateTextTokens(text),
+        });
+        return text;
       } catch {
         // fall through to OpenAI/local fallback
       }
@@ -188,29 +231,48 @@ export class GeminiLlmClient implements LlmClient {
     const openAiClient = this.openai;
     if (openAiClient) {
       try {
-        const response = await executeWithResilience(
-          () =>
-            withTimeout(
-              openAiClient.chat.completions.create({
-                model: 'gpt-4o-mini',
-                temperature: 0.2,
-                max_tokens: env.llmMaxOutputTokens,
-                messages: [
-                  { role: 'system', content: systemPrompt },
-                  { role: 'user', content: prompt },
-                ],
-              }),
-              env.llmTimeoutMs,
-              'OpenAI request',
-            ),
+        const response = await withObservedSpan(
           {
-            circuitBreaker: openAiCircuit,
-            retry: llmRetryPolicy(),
-            shouldRecordFailure: isTransientUpstreamError,
+            spanName: 'llm.generate.openai',
+            operation: 'llm.generate',
+            attributes: {
+              provider: 'openai',
+              model: 'gpt-4o-mini',
+            },
+            metricAttributes: {
+              provider: 'openai',
+              model: 'gpt-4o-mini',
+            },
           },
+          () =>
+            executeWithResilience(
+              () =>
+                withTimeout(
+                  openAiClient.chat.completions.create({
+                    model: 'gpt-4o-mini',
+                    temperature: 0.2,
+                    max_tokens: env.llmMaxOutputTokens,
+                    messages: [
+                      { role: 'system', content: systemPrompt },
+                      { role: 'user', content: prompt },
+                    ],
+                  }),
+                  env.llmTimeoutMs,
+                  'OpenAI request',
+                ),
+              {
+                circuitBreaker: openAiCircuit,
+                retry: llmRetryPolicy(),
+                shouldRecordFailure: isTransientUpstreamError,
+              },
+            ),
         );
-
-        return response.choices[0]?.message?.content?.trim() ?? null;
+        const text = response.choices[0]?.message?.content?.trim() ?? null;
+        recordTokenUsage({
+          provider: 'openai',
+          tokens: response.usage?.total_tokens ?? estimateTextTokens(text ?? ''),
+        });
+        return text;
       } catch {
         return null;
       }

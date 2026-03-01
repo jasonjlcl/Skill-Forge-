@@ -11,6 +11,12 @@ import {
   moderateAssistantOutput,
   sanitizeRetrievedContext,
 } from '../services/safety.js';
+import {
+  recordStreamAborted,
+  recordStreamCompleted,
+  recordStreamStarted,
+  setRequestCorrelation,
+} from '../services/observability.js';
 import { registerSseConnection } from '../services/sseRegistry.js';
 
 const streamQuerySchema = z.object({
@@ -70,6 +76,7 @@ export const createChatRouter = (deps: AppDeps): Router => {
         module: parsed.data.module,
         id: randomUUID(),
       });
+      setRequestCorrelation(req, { sessionId: session.id });
 
       res.status(201).json({
         sessionId: session.id,
@@ -103,6 +110,10 @@ export const createChatRouter = (deps: AppDeps): Router => {
       await deps.store.purgeExpiredPendingStreamRequests();
 
       const streamId = randomUUID();
+      setRequestCorrelation(req, {
+        streamId,
+        sessionId,
+      });
       await deps.store.createPendingStreamRequest({
         id: streamId,
         userId: req.user.id,
@@ -137,6 +148,7 @@ export const createChatRouter = (deps: AppDeps): Router => {
         id: parsed.data.stream_id,
         userId: req.user.id,
       });
+      setRequestCorrelation(req, { streamId: parsed.data.stream_id });
       if (!pending) {
         res.status(404).json({ error: 'Stream request not found or expired' });
         return;
@@ -154,6 +166,11 @@ export const createChatRouter = (deps: AppDeps): Router => {
           module: effectiveModule,
         });
       }
+      setRequestCorrelation(req, { sessionId: session.id });
+      recordStreamStarted({
+        route: '/chat/stream',
+        module: effectiveModule,
+      });
 
       if (session.userId !== req.user.id) {
         res.status(403).json({ error: 'Forbidden' });
@@ -216,8 +233,15 @@ export const createChatRouter = (deps: AppDeps): Router => {
       registerSseConnection(res);
 
       let closed = false;
+      let streamCompleted = false;
       res.on('close', () => {
         closed = true;
+        if (!streamCompleted) {
+          recordStreamAborted({
+            route: '/chat/stream',
+            module: effectiveModule,
+          });
+        }
       });
 
       writeSse(res, 'meta', {
@@ -259,6 +283,11 @@ export const createChatRouter = (deps: AppDeps): Router => {
           policyVersion: moderatedAnswer.policyVersion,
         },
       });
+      streamCompleted = true;
+      recordStreamCompleted({
+        route: '/chat/stream',
+        module: effectiveModule,
+      });
       res.end();
     }),
   );
@@ -275,6 +304,9 @@ export const createChatRouter = (deps: AppDeps): Router => {
       }
 
       const { sessionId, module, question, answer } = parsed.data;
+      setRequestCorrelation(req, {
+        sessionId,
+      });
 
       const contextChunks = await deps.vectorStore.query({
         query: question,

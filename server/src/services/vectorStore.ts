@@ -6,6 +6,7 @@ import {
   isTransientUpstreamError,
   type RetryOptions,
 } from './resilience.js';
+import { withObservedSpan } from './observability.js';
 
 export interface TrainingChunk {
   id: string;
@@ -127,39 +128,61 @@ export class InMemoryVectorStore implements VectorStore {
   private chunks = new Map<string, IndexedChunk>();
 
   async upsert(chunks: TrainingChunk[]): Promise<void> {
-    const embeddings = await embedTexts(chunks.map((chunk) => chunk.text));
-    for (let index = 0; index < chunks.length; index += 1) {
-      const chunk = chunks[index];
-      this.chunks.set(chunk.id, {
-        ...chunk,
-        embedding: embeddings[index],
-      });
-    }
+    await withObservedSpan(
+      {
+        spanName: 'vector.upsert.in_memory',
+        operation: 'vector.upsert',
+        attributes: {
+          backend: 'in_memory',
+        },
+      },
+      async () => {
+        const embeddings = await embedTexts(chunks.map((chunk) => chunk.text));
+        for (let index = 0; index < chunks.length; index += 1) {
+          const chunk = chunks[index];
+          this.chunks.set(chunk.id, {
+            ...chunk,
+            embedding: embeddings[index],
+          });
+        }
+      },
+    );
   }
 
   async query(input: VectorStoreQueryInput): Promise<RetrievedChunk[]> {
-    const queryEmbedding = await embedText(input.query);
-    const minScore = Math.max(0, Math.min(1, input.minScore ?? 0));
+    return withObservedSpan(
+      {
+        spanName: 'vector.query.in_memory',
+        operation: 'vector.query',
+        attributes: {
+          backend: 'in_memory',
+        },
+      },
+      async () => {
+        const queryEmbedding = await embedText(input.query);
+        const minScore = Math.max(0, Math.min(1, input.minScore ?? 0));
 
-    const candidates = [...this.chunks.values()].filter(
-      (chunk) => !input.module || chunk.module === input.module,
+        const candidates = [...this.chunks.values()].filter(
+          (chunk) => !input.module || chunk.module === input.module,
+        );
+
+        const ranked = candidates
+          .map((chunk) => ({
+            ...chunk,
+            score: cosineSimilarity(queryEmbedding, chunk.embedding),
+          }))
+          .filter((chunk) => chunk.score >= minScore)
+          .sort((a, b) => b.score - a.score)
+          .slice(0, Math.max(1, input.topK))
+          .map((chunk) => {
+            const { embedding, ...rest } = chunk;
+            void embedding;
+            return rest;
+          });
+
+        return applyContextBudget(ranked, env.ragMaxContextChars);
+      },
     );
-
-    const ranked = candidates
-      .map((chunk) => ({
-        ...chunk,
-        score: cosineSimilarity(queryEmbedding, chunk.embedding),
-      }))
-      .filter((chunk) => chunk.score >= minScore)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, Math.max(1, input.topK))
-      .map((chunk) => {
-        const { embedding, ...rest } = chunk;
-        void embedding;
-        return rest;
-      });
-
-    return applyContextBudget(ranked, env.ragMaxContextChars);
   }
 }
 
@@ -191,26 +214,39 @@ class ChromaVectorStore implements VectorStore {
     await this.fallback.upsert(chunks);
 
     try {
-      await executeWithResilience(
-        async () => {
-          const collection = await this.getCollection();
-          const embeddings = await embedTexts(chunks.map((chunk) => chunk.text));
-          await collection.upsert({
-            ids: chunks.map((chunk) => chunk.id),
-            documents: chunks.map((chunk) => chunk.text),
-            embeddings,
-            metadatas: chunks.map((chunk) => ({
-              module: chunk.module,
-              source: chunk.source,
-              ...chunk.metadata,
-            })),
-          });
-        },
+      await withObservedSpan(
         {
-          circuitBreaker: chromaUpsertCircuit,
-          retry: vectorRetryPolicy(),
-          shouldRecordFailure: isTransientUpstreamError,
+          spanName: 'vector.upsert.chroma',
+          operation: 'vector.upsert',
+          attributes: {
+            backend: 'chroma',
+          },
+          metricAttributes: {
+            backend: 'chroma',
+          },
         },
+        () =>
+          executeWithResilience(
+            async () => {
+              const collection = await this.getCollection();
+              const embeddings = await embedTexts(chunks.map((chunk) => chunk.text));
+              await collection.upsert({
+                ids: chunks.map((chunk) => chunk.id),
+                documents: chunks.map((chunk) => chunk.text),
+                embeddings,
+                metadatas: chunks.map((chunk) => ({
+                  module: chunk.module,
+                  source: chunk.source,
+                  ...chunk.metadata,
+                })),
+              });
+            },
+            {
+              circuitBreaker: chromaUpsertCircuit,
+              retry: vectorRetryPolicy(),
+              shouldRecordFailure: isTransientUpstreamError,
+            },
+          ),
       );
     } catch (error) {
       if (!this.allowFallback) {
@@ -226,21 +262,34 @@ class ChromaVectorStore implements VectorStore {
     const minScore = Math.max(0, Math.min(1, input.minScore ?? 0));
 
     try {
-      const result = await executeWithResilience(
-        async () => {
-          const collection = await this.getCollection();
-          const queryEmbedding = await embedText(input.query);
-          return collection.query({
-            queryEmbeddings: [queryEmbedding],
-            nResults: Math.max(1, input.topK),
-            where: input.module ? { module: input.module } : undefined,
-          });
-        },
+      const result = await withObservedSpan(
         {
-          circuitBreaker: chromaQueryCircuit,
-          retry: vectorRetryPolicy(),
-          shouldRecordFailure: isTransientUpstreamError,
+          spanName: 'vector.query.chroma',
+          operation: 'vector.query',
+          attributes: {
+            backend: 'chroma',
+          },
+          metricAttributes: {
+            backend: 'chroma',
+          },
         },
+        () =>
+          executeWithResilience(
+            async () => {
+              const collection = await this.getCollection();
+              const queryEmbedding = await embedText(input.query);
+              return collection.query({
+                queryEmbeddings: [queryEmbedding],
+                nResults: Math.max(1, input.topK),
+                where: input.module ? { module: input.module } : undefined,
+              });
+            },
+            {
+              circuitBreaker: chromaQueryCircuit,
+              retry: vectorRetryPolicy(),
+              shouldRecordFailure: isTransientUpstreamError,
+            },
+          ),
       );
 
       const ids = result.ids?.[0] ?? [];

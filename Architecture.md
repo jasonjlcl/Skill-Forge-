@@ -13,6 +13,7 @@ flowchart LR
   WEB --> SPA["React SPA (Vite)"]
   WEB -->|/api| API["Express API"]
   WEB -->|/api/chat/stream| SSE["SSE endpoint"]
+  API --> OBS["Observability Layer (OTel API + JSON summaries)"]
 
   API --> DB[("PostgreSQL via Drizzle")]
   API --> VS[("ChromaDB / InMemory Vector Store")]
@@ -28,19 +29,24 @@ sequenceDiagram
   participant VS as Vector Store
   participant SAFE as Safety Layer
   participant LLM as LLM
+  participant OBS as Observability
 
   SPA->>API: POST /api/chat/stream/start
   API-->>SPA: streamId
+  API->>OBS: mark stream_started + correlation IDs
   SPA->>API: GET /api/chat/stream?stream_id=...
   API->>VS: query(topK, minScore, module)
+  API->>OBS: span(vector.query) + latency/error metric
   VS-->>API: retrieved chunks
   API->>SAFE: sanitize retrieved context
   SAFE-->>API: trust/risk-tagged context
   API->>LLM: prompt(question + sanitized context)
+  API->>OBS: span(llm.generate) + token usage metric
   LLM-->>API: answer draft
   API->>SAFE: moderate output
   SAFE-->>API: allow/reframe/block + safe answer
   API-->>SPA: SSE meta/token/done
+  API->>OBS: mark stream_completed or stream_aborted
 ```
 
 ## Runtime Components
@@ -54,6 +60,10 @@ sequenceDiagram
   - `services/vectorStore.ts` retrieval and context budgeting.
   - `services/embeddings.ts` semantic embedding provider (OpenAI) with non-prod hash fallback.
   - `services/safety.ts` context sanitization and output moderation.
+- Observability:
+  - `services/observability.ts` central tracing/metrics helpers and periodic summary logs.
+  - `middleware/logging.ts` request metrics + correlation-enriched request logs.
+  - `routes/chat.ts` stream lifecycle metrics and session/stream correlation propagation.
 
 ## Guardrails
 
@@ -66,6 +76,10 @@ sequenceDiagram
 - Safety:
   - Retrieved context injection sanitization + risk tagging.
   - Output moderation policy with allow/reframe/block decisions.
+- Observability:
+  - OTel span wrappers for provider and vector dependencies.
+  - Metrics for `latency_ms`, request/error counts, `token_usage_total`, and `stream_completion_rate`.
+  - Correlated request logs include `sessionId` and `streamId` where available.
 
 ## Current API Shape (Chat)
 

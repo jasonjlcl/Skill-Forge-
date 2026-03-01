@@ -98,6 +98,14 @@ Implemented resilience controls for upstream dependencies:
 - Shared policy knobs exposed via environment variables for retry and circuit settings
 - Aggregated resilience telemetry logs (`resilience_summary`) plus circuit-open events (`resilience_circuit_opened`)
 
+## PR5 Guardrails (Observability Baseline)
+
+Implemented observability baseline across chat and dependency paths:
+- OpenTelemetry spans and metrics wiring in `server/src/services/observability.ts`
+- Request latency/error metrics and correlated request logs (`sessionId`, `streamId`)
+- Provider/vector instrumentation for latency/error/token usage metrics
+- Stream lifecycle metrics (`started`, `completed`, `aborted`) and completion-rate tracking
+
 ## PR2 Guardrails (AI Safety + RAG Quality)
 
 Implemented quality and safety gates:

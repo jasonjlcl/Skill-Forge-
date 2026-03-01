@@ -9,11 +9,11 @@ Reviewer: Staff/Principal Engineering Review (evidence-based)
 Current state (2026-03-01): the app is production MVP-ready with validated staged promotion. GitHub Actions `workflow_dispatch` runs `#31`/`#32` (2026-02-28 UTC) and `#41` (2026-03-01 UTC) completed successfully through production deployment and smoke verification.
 
 Top 5 remaining issues to address next:
-1. **Observability is still logging-first** (no metrics/tracing/SLO instrumentation).
-2. **Governance/privacy controls are incomplete** (retention/export/delete endpoints not implemented).
-3. **RAG evaluation is still non-blocking in CI** (`continue-on-error: true`), so regressions do not block promotions.
-4. **Streaming UX is replay-based, not provider-native token streaming yet**.
-5. **Compliance hardening can be strengthened** (artifact attestations/signing and stricter branch/deploy protection policy).
+1. **Governance/privacy controls are incomplete** (retention/export/delete endpoints not implemented).
+2. **RAG evaluation is still non-blocking in CI** (`continue-on-error: true`), so regressions do not block promotions.
+3. **Streaming UX is replay-based, not provider-native token streaming yet**.
+4. **Compliance hardening can be strengthened** (artifact attestations/signing and stricter branch/deploy protection policy).
+5. **Observability still needs production operationalization** (exporters/dashboards/SLO alerting on top of newly added instrumentation).
 
 Major improvements completed since baseline:
 - PR1 delivered async error boundaries, LLM output cap/context budgeting enforcement, and DB hot-path indexes.
@@ -23,19 +23,19 @@ Major improvements completed since baseline:
 
 ## Readiness Score (0-10)
 
-Final score: **8.8 / 10**
+Final score: **9.0 / 10**
 
 Rubric:
 - Security & Privacy: 1.6 / 2.0
 - Reliability & Correctness: 1.7 / 2.0
-- Observability: 0.9 / 2.0
+- Observability: 1.1 / 2.0
 - Performance & Cost Control: 1.8 / 2.0
 - AI Quality & Safety: 1.5 / 2.0
 - Deployment/CI/CD/Maintainability modifiers: +1.3 / 2.0
 
 Interpretation:
 - Strong production MVP posture with staged promotion and security gates operational.
-- Not yet enterprise-ready due to observability, governance/privacy, and horizontal-scale architecture gaps.
+- Not yet enterprise-ready due to governance/privacy, full observability operationalization, and remaining compliance gaps.
 
 ## Status Update Since Baseline (2026-03-01)
 
@@ -44,6 +44,8 @@ Resolved since 2026-02-28:
 - F-REL-02 stream registry durability/horizontal scaling (pending stream requests now stored in shared datastore).
 - F-REL-03 resilience policy gaps (retry/backoff/circuit-breakers).
 - F-REL-04 versioned migration apply workflow (versioned SQL migrations + tracked apply runner).
+- F-OBS-01 metrics/tracing/SLO baseline instrumentation.
+- F-OBS-02 request log correlation enrichment (`sessionId`, `streamId`).
 - F-PERF-01 and F-PERF-02 output/context budget enforcement.
 - F-PERF-03 semantic embedding provider integration (OpenAI + batching/cache, non-prod fallback).
 - F-PERF-04 DB indexing gaps on key hot paths.
@@ -53,7 +55,6 @@ Resolved since 2026-02-28:
 - F-DEP-03 and F-MNT-01 documentation drift on architecture/security guidance.
 
 Still open:
-- F-OBS-01 and F-OBS-02 metrics/tracing/SLO and chat correlation enrichment.
 - F-SEC-02 privacy governance endpoints/retention policy enforcement.
 - RAG evaluation remains non-blocking in CI (`continue-on-error: true`).
 - Compliance hardening extensions (artifact attestations/signing and stricter deployment protection policy).
@@ -222,22 +223,34 @@ Resolution:
 ## Observability
 
 ### F-OBS-01 - No metrics/tracing/SLO instrumentation
-Severity: High
-Evidence:
-- Logging present (`server/src/middleware/logging.ts`), health endpoint present (`server/src/services/health.ts`), but no metrics/tracing stack in code/workflows.
-Impact:
+Severity (baseline): High
+Status (2026-03-01): Resolved
+Baseline evidence:
+- Logging and health checks existed, but there was no tracing/metrics instrumentation around critical request/provider/retrieval paths.
+Current evidence:
+- Shared observability module now emits OpenTelemetry spans and metric instruments in `server/src/services/observability.ts`.
+- Provider calls are instrumented with spans/metrics in `server/src/services/gemini.ts`.
+- Vector retrieval/upsert paths are instrumented with spans/metrics in `server/src/services/vectorStore.ts`.
+- Request latency/error metrics are captured in `server/src/middleware/logging.ts`.
+- Stream lifecycle metrics (`started`, `completed`, `aborted`) and `stream_completion_rate` are recorded in chat flow (`server/src/routes/chat.ts`).
+Historical impact:
 - Hard to detect latency regressions, token cost spikes, and retrieval quality drift.
-Recommended fix:
-- Add OpenTelemetry spans around retrieval + provider calls, plus metrics (`latency`, `error_rate`, `token_usage`, `stream_completion_rate`).
+Resolution:
+- Added OpenTelemetry spans and metrics (`latency`, `error_rate`, `token_usage`, `stream_completion_rate`) across request/provider/retrieval/stream paths.
 
 ### F-OBS-02 - Request logs lack conversation/session correlation ID
-Severity: Medium
-Evidence:
-- Request log fields include `requestId`, method/path/status (`server/src/middleware/logging.ts`), but no `sessionId`/`conversationId` enrichment.
-Impact:
+Severity (baseline): Medium
+Status (2026-03-01): Resolved
+Baseline evidence:
+- Request logs included `requestId` and method/path/status, but no chat correlation fields.
+Current evidence:
+- Express request context now carries correlation IDs (`sessionId`, `streamId`) in `server/src/types/express.d.ts`.
+- Chat routes set correlation IDs as sessions/streams are created/consumed in `server/src/routes/chat.ts`.
+- Request logs now emit `sessionId` and `streamId` in `server/src/middleware/logging.ts`.
+Historical impact:
 - Slower incident triage for chat-specific issues.
-Recommended fix:
-- Attach and log `sessionId`/`streamId` where available (header/context).
+Resolution:
+- Added session/stream correlation enrichment so request logs include `sessionId` and `streamId` where available.
 
 ## Performance & Cost Control
 
@@ -419,9 +432,9 @@ Recommended fix:
 ## Now / Next / Later Roadmap (Updated 2026-03-01)
 
 Now (1-3 weeks, highest impact)
-- PR3: add metrics/tracing/SLO skeleton and chat correlation fields (`sessionId`, `streamId`).
 - PR5: implement governance/privacy controls (retention, user export/delete endpoints, audit trail events).
 - Move `rag-eval` from non-blocking to policy-gated once baseline stability is proven.
+- Operationalize observability baseline: OTEL exporters, dashboards, and SLO alerts over the new metrics/spans.
 
 Next (3-8 weeks)
 - Add retrieval-quality telemetry and cost/latency budgets for embedding + query paths.
