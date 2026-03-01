@@ -162,14 +162,17 @@ Recommended fix:
 ## Reliability & Correctness
 
 ### F-REL-01 - Async Express handlers lack explicit async error boundary
-Severity: High
-Evidence:
-- Async route handlers in `server/src/routes/chat.ts:72` and `server/src/routes/chat.ts:103` with no local `try/catch` forwarding.
-- Central error handler exists (`server/src/middleware/error.ts`) but Express 4 does not automatically handle all async throws.
-Impact:
-- Provider/vector/db thrown errors can become unhandled failures and destabilize API process.
-Recommended fix:
-- Add `wrapAsync()` helper for all async route handlers (or `express-async-errors`) and ensure all exceptions go through `next(err)`.
+Severity (baseline): High
+Status (2026-03-01): Resolved
+Baseline evidence:
+- Async route handlers in `server/src/routes/chat.ts` were previously not consistently wrapped, while Express 4 does not automatically forward all async throws.
+Current evidence:
+- `wrapAsync` helper exists in `server/src/middleware/async.ts`.
+- Async handlers are wrapped across routes (for example `server/src/routes/chat.ts`, `server/src/routes/auth.ts`, `server/src/routes/quiz.ts`, `server/src/routes/me.ts`).
+Historical impact:
+- Provider/vector/db thrown errors could become unhandled failures and destabilize API process.
+Resolution:
+- Added `wrapAsync()` across async handlers so exceptions flow through `next(err)` into centralized error handling.
 
 ### F-REL-02 - Pending stream registry is in-process memory only
 Severity: High
