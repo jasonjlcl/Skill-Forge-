@@ -6,6 +6,12 @@ import { env } from '../config/env.js';
 import { skillPromptGuide } from './profiling.js';
 import { applyContextBudget, type RetrievedChunk } from './vectorStore.js';
 import { sanitizeRetrievedContext, type SanitizedRetrievedChunk } from './safety.js';
+import {
+  CircuitBreaker,
+  executeWithResilience,
+  isTransientUpstreamError,
+  type RetryOptions,
+} from './resilience.js';
 
 const quizSchema = z.array(
   z.object({
@@ -102,6 +108,28 @@ const withTimeout = async <T>(promise: Promise<T>, timeoutMs: number, label: str
   }
 };
 
+const llmRetryPolicy = (): RetryOptions => ({
+  maxAttempts: env.llmRetryMaxAttempts,
+  baseDelayMs: env.llmRetryBaseDelayMs,
+  maxDelayMs: env.llmRetryMaxDelayMs,
+  jitterRatio: env.retryJitterRatio,
+  isRetryable: isTransientUpstreamError,
+});
+
+const geminiCircuit = new CircuitBreaker({
+  name: 'gemini',
+  failureThreshold: env.llmCircuitFailureThreshold,
+  openMs: env.llmCircuitOpenMs,
+  shouldRecordFailure: isTransientUpstreamError,
+});
+
+const openAiCircuit = new CircuitBreaker({
+  name: 'openai',
+  failureThreshold: env.llmCircuitFailureThreshold,
+  openMs: env.llmCircuitOpenMs,
+  shouldRecordFailure: isTransientUpstreamError,
+});
+
 export interface LlmClient {
   generateAssistance(input: {
     question: string;
@@ -132,15 +160,23 @@ export class GeminiLlmClient implements LlmClient {
     if (this.gemini) {
       try {
         const model = this.gemini.getGenerativeModel({ model: 'gemini-1.5-flash' });
-        const response = await withTimeout(
-          model.generateContent({
-            generationConfig: {
-              maxOutputTokens: env.llmMaxOutputTokens,
-            },
-            contents: [{ role: 'user', parts: [{ text: `${systemPrompt}\n\n${prompt}` }] }],
-          }),
-          env.llmTimeoutMs,
-          'Gemini request',
+        const response = await executeWithResilience(
+          () =>
+            withTimeout(
+              model.generateContent({
+                generationConfig: {
+                  maxOutputTokens: env.llmMaxOutputTokens,
+                },
+                contents: [{ role: 'user', parts: [{ text: `${systemPrompt}\n\n${prompt}` }] }],
+              }),
+              env.llmTimeoutMs,
+              'Gemini request',
+            ),
+          {
+            circuitBreaker: geminiCircuit,
+            retry: llmRetryPolicy(),
+            shouldRecordFailure: isTransientUpstreamError,
+          },
         );
 
         return response.response.text().trim();
@@ -149,20 +185,29 @@ export class GeminiLlmClient implements LlmClient {
       }
     }
 
-    if (this.openai) {
+    const openAiClient = this.openai;
+    if (openAiClient) {
       try {
-        const response = await withTimeout(
-          this.openai.chat.completions.create({
-            model: 'gpt-4o-mini',
-            temperature: 0.2,
-            max_tokens: env.llmMaxOutputTokens,
-            messages: [
-              { role: 'system', content: systemPrompt },
-              { role: 'user', content: prompt },
-            ],
-          }),
-          env.llmTimeoutMs,
-          'OpenAI request',
+        const response = await executeWithResilience(
+          () =>
+            withTimeout(
+              openAiClient.chat.completions.create({
+                model: 'gpt-4o-mini',
+                temperature: 0.2,
+                max_tokens: env.llmMaxOutputTokens,
+                messages: [
+                  { role: 'system', content: systemPrompt },
+                  { role: 'user', content: prompt },
+                ],
+              }),
+              env.llmTimeoutMs,
+              'OpenAI request',
+            ),
+          {
+            circuitBreaker: openAiCircuit,
+            retry: llmRetryPolicy(),
+            shouldRecordFailure: isTransientUpstreamError,
+          },
         );
 
         return response.choices[0]?.message?.content?.trim() ?? null;

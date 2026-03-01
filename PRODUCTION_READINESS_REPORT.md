@@ -11,8 +11,8 @@ Current state (2026-03-01): the app is production MVP-ready with validated stage
 Top 5 remaining issues to address next:
 1. **Observability is still logging-first** (no metrics/tracing/SLO instrumentation).
 2. **Governance/privacy controls are incomplete** (retention/export/delete endpoints not implemented).
-3. **Resilience/retrieval maturity gaps remain** (no bounded retry/circuit-breaker policy around vector/provider dependencies).
-4. **RAG evaluation is still non-blocking in CI** (`continue-on-error: true`), so regressions do not block promotions.
+3. **RAG evaluation is still non-blocking in CI** (`continue-on-error: true`), so regressions do not block promotions.
+4. **Streaming UX is replay-based, not provider-native token streaming yet**.
 5. **Compliance hardening can be strengthened** (artifact attestations/signing and stricter branch/deploy protection policy).
 
 Major improvements completed since baseline:
@@ -23,11 +23,11 @@ Major improvements completed since baseline:
 
 ## Readiness Score (0-10)
 
-Final score: **8.6 / 10**
+Final score: **8.8 / 10**
 
 Rubric:
 - Security & Privacy: 1.6 / 2.0
-- Reliability & Correctness: 1.5 / 2.0
+- Reliability & Correctness: 1.7 / 2.0
 - Observability: 0.9 / 2.0
 - Performance & Cost Control: 1.8 / 2.0
 - AI Quality & Safety: 1.5 / 2.0
@@ -42,6 +42,7 @@ Interpretation:
 Resolved since 2026-02-28:
 - F-REL-01 async error boundary gap.
 - F-REL-02 stream registry durability/horizontal scaling (pending stream requests now stored in shared datastore).
+- F-REL-03 resilience policy gaps (retry/backoff/circuit-breakers).
 - F-REL-04 versioned migration apply workflow (versioned SQL migrations + tracked apply runner).
 - F-PERF-01 and F-PERF-02 output/context budget enforcement.
 - F-PERF-03 semantic embedding provider integration (OpenAI + batching/cache, non-prod fallback).
@@ -54,7 +55,6 @@ Resolved since 2026-02-28:
 Still open:
 - F-OBS-01 and F-OBS-02 metrics/tracing/SLO and chat correlation enrichment.
 - F-SEC-02 privacy governance endpoints/retention policy enforcement.
-- F-REL-03 resilience policy gaps (retry/backoff/circuit-breakers).
 - RAG evaluation remains non-blocking in CI (`continue-on-error: true`).
 - Compliance hardening extensions (artifact attestations/signing and stricter deployment protection policy).
 
@@ -191,14 +191,20 @@ Resolution:
 - Replaced route-level in-memory registry with shared datastore persistence and explicit expiry handling.
 
 ### F-REL-03 - Provider/vector resilience lacks retries/backoff/circuit-breakers
-Severity: Medium
-Evidence:
-- Single-shot provider calls (`server/src/services/gemini.ts:79`, `server/src/services/gemini.ts:95`)
-- Single-shot vector query (`server/src/services/vectorStore.ts:142`)
-Impact:
-- Temporary upstream blips degrade UX and can increase error rates.
-Recommended fix:
-- Add bounded retries with jitter for transient classes and per-provider circuit-breaker counters.
+Severity (baseline): Medium
+Status (2026-03-01): Resolved
+Baseline evidence:
+- Single-shot provider calls in `server/src/services/gemini.ts` without bounded retry/backoff and no provider circuit state.
+- Single-shot vector query path in `server/src/services/vectorStore.ts` without retry/backoff/circuit policy.
+Current evidence:
+- Shared resilience layer added in `server/src/services/resilience.ts` with transient error classification, bounded exponential retry, jitter, and circuit-breaker primitives.
+- LLM provider calls now run under retries + per-provider circuit breakers (`gemini`, `openai`) in `server/src/services/gemini.ts`.
+- Chroma query/upsert paths now run under retries + per-dependency circuit breakers (`chroma.query`, `chroma.upsert`) in `server/src/services/vectorStore.ts`.
+- Runtime tuning knobs are now exposed via env config in `server/src/config/env.ts` (`LLM_RETRY_*`, `VECTOR_RETRY_*`, `*_CIRCUIT_*`, `RETRY_JITTER_RATIO`).
+Historical impact:
+- Temporary upstream blips degraded UX and could increase error rates.
+Resolution:
+- Added bounded retries with jitter and per-dependency circuit-breaker counters for LLM and vector dependencies.
 
 ### F-REL-04 - Non-deterministic migration workflow for audited environments
 Severity (baseline): High
@@ -406,9 +412,9 @@ Now (1-3 weeks, highest impact)
 - Move `rag-eval` from non-blocking to policy-gated once baseline stability is proven.
 
 Next (3-8 weeks)
-- Add bounded retry/backoff and circuit-breaker policy for provider/vector dependencies.
 - Add retrieval-quality telemetry and cost/latency budgets for embedding + query paths.
 - Tighten deployment compliance posture (attestations/signing, protected deployment policies, stricter branch protections).
+- Tune circuit/retry thresholds using production latency/error telemetry and documented SLOs.
 
 Later (8+ weeks)
 - Move RAG eval from non-blocking to policy-gated once baseline is stable.
@@ -446,6 +452,8 @@ Additional implemented through 2026-03-01:
 - PR1 (reliability/cost): async wrapper, output/context guardrails, DB indexes, tests.
 - PR2 (AI safety/RAG): output moderation, prompt-injection sanitization/tagging, `scripts/eval-rag.ts`, CI rag-eval job.
 - Retrieval quality: integrated semantic OpenAI embeddings with batching/cache and configurable provider/model settings.
+- Resilience policy: added bounded retry/backoff with jitter and circuit-breakers for LLM and vector dependencies.
+- Resilience observability: added lightweight aggregated retry/circuit telemetry logs (`resilience_summary`, `resilience_circuit_opened`) to support threshold tuning.
 - PR4 (CI/CD): TruffleHog + CodeQL + Trivy gates, staged approvals, smoke test, rollback automation.
 - Stream request durability: moved pending stream request handling from in-process map to shared datastore persistence.
 - Migration control: replaced runtime `drizzle-kit push` usage with versioned SQL migration runner (`server/scripts/migrate.ts`) backed by `schema_migrations`.

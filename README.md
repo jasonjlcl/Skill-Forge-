@@ -90,6 +90,14 @@ Implemented in backend:
 - RAG prompt context budgeting via `RAG_MAX_CONTEXT_CHARS`
 - Hot-path DB indexes for chat/quiz retrieval paths
 
+## PR3 Guardrails (Resilience Policy)
+
+Implemented resilience controls for upstream dependencies:
+- Bounded retries with exponential backoff + jitter for transient provider/vector failures
+- Per-dependency circuit breakers (`gemini`, `openai`, `chroma.query`, `chroma.upsert`)
+- Shared policy knobs exposed via environment variables for retry and circuit settings
+- Aggregated resilience telemetry logs (`resilience_summary`) plus circuit-open events (`resilience_circuit_opened`)
+
 ## PR2 Guardrails (AI Safety + RAG Quality)
 
 Implemented quality and safety gates:
@@ -171,6 +179,11 @@ Important variables:
 - `RAG_MAX_CONTEXT_CHARS`
 - `LLM_MAX_OUTPUT_TOKENS`
 - `LLM_TIMEOUT_MS`
+- `RETRY_JITTER_RATIO`
+- `LLM_RETRY_MAX_ATTEMPTS`, `LLM_RETRY_BASE_DELAY_MS`, `LLM_RETRY_MAX_DELAY_MS`
+- `LLM_CIRCUIT_FAILURE_THRESHOLD`, `LLM_CIRCUIT_OPEN_MS`
+- `VECTOR_RETRY_MAX_ATTEMPTS`, `VECTOR_RETRY_BASE_DELAY_MS`, `VECTOR_RETRY_MAX_DELAY_MS`
+- `VECTOR_CIRCUIT_FAILURE_THRESHOLD`, `VECTOR_CIRCUIT_OPEN_MS`
 
 ## API Routes
 
@@ -225,6 +238,28 @@ $env:DOCKER_BUILDKIT='0'
 $env:COMPOSE_DOCKER_CLI_BUILD='0'
 npm run docker:prod:up
 ```
+
+### Recommended Resilience Overrides (Production)
+
+Use this minimal baseline first, then tune from `resilience_summary` and `resilience_circuit_opened` logs:
+
+```env
+RETRY_JITTER_RATIO=0.20
+LLM_RETRY_MAX_ATTEMPTS=3
+LLM_RETRY_BASE_DELAY_MS=300
+LLM_RETRY_MAX_DELAY_MS=2500
+LLM_CIRCUIT_FAILURE_THRESHOLD=6
+LLM_CIRCUIT_OPEN_MS=45000
+VECTOR_RETRY_MAX_ATTEMPTS=3
+VECTOR_RETRY_BASE_DELAY_MS=200
+VECTOR_RETRY_MAX_DELAY_MS=1500
+VECTOR_CIRCUIT_FAILURE_THRESHOLD=6
+VECTOR_CIRCUIT_OPEN_MS=30000
+```
+
+Tuning guidance:
+- If `shortCircuits` is high but upstream errors are brief, increase `*_CIRCUIT_FAILURE_THRESHOLD` or reduce `*_CIRCUIT_OPEN_MS`.
+- If `failures` and `retries` are both high with low recovery, reduce retry aggressiveness and investigate upstream saturation.
 
 ### Shared Hosting (cPanel/CloudLinux)
 
