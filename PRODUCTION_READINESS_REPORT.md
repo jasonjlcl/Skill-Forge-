@@ -7,6 +7,7 @@ Reviewer: Staff/Principal Engineering Review (evidence-based)
 ## Executive Summary
 
 Current state (2026-03-01): the app is production MVP-ready with validated staged promotion. GitHub Actions `workflow_dispatch` runs `#31`/`#32` (2026-02-28 UTC) and `#41` (2026-03-01 UTC) completed successfully through production deployment and smoke verification.
+Deployment model: promotion is SSH-based and host-agnostic (`scripts/prod/deploy-remote.sh`), which is compatible with Linux VM targets such as GCP Compute Engine when SSH/Docker prerequisites are met.
 
 Top 5 remaining issues to address next:
 1. **Governance/privacy controls are incomplete** (retention/export/delete endpoints not implemented).

@@ -53,6 +53,7 @@ sequenceDiagram
 
 - Frontend: `client/src` React SPA, auth/chat/quiz/analytics UI.
 - Backend: `server/src` routes, middleware, app wiring.
+- Deployment runtime: Docker Compose on a remote Linux host (for example VPS or GCP Compute Engine VM) via SSH-based CI promotion.
 - Data: PostgreSQL for transactional data, ChromaDB (or in-memory fallback) for retrieval.
   - Pending stream requests are persisted with TTL/expiry semantics for restart and replica safety.
 - AI:
@@ -105,3 +106,8 @@ Versioned migration:
 Migration apply flow:
 - Versioned SQL migrations are applied by `server/scripts/migrate.ts`.
 - Applied migration state is tracked in `schema_migrations`.
+
+## Deployment Topology Notes
+
+- CI promotion uses an SSH-based remote deploy script (`scripts/prod/deploy-remote.sh`), so the host provider is interchangeable.
+- GCP Compute Engine is supported as a VM target when Docker, Docker Compose, and required ports/secrets are configured.

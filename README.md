@@ -238,6 +238,7 @@ Docker/VPS:
 ### VPS (Recommended)
 
 This repo includes `docker-compose.prod.yml` plus TLS overlay `docker-compose.https.yml`.
+The remote deployment workflow is SSH-based and host-agnostic, so it works with common Linux VM targets including GCP Compute Engine.
 
 If Docker BuildKit has issues on OneDrive/Windows reparse-point paths, use legacy build mode:
 
@@ -246,6 +247,15 @@ $env:DOCKER_BUILDKIT='0'
 $env:COMPOSE_DOCKER_CLI_BUILD='0'
 npm run docker:prod:up
 ```
+
+### GCP Compute Engine (VM)
+
+This project can be deployed to a GCP Compute Engine VM using the same workflow:
+- Provision a Linux VM with Docker + Docker Compose and clone this repo on the VM.
+- Set GitHub environment secrets (`SSH_HOST`, `SSH_USER`, `SSH_KEY`, `DEPLOY_PATH`, `SMOKE_BASE_URL`) to target that VM.
+- Ensure firewall rules allow `80/443` (and SSH `22` from your admin/runner paths).
+- Use the existing `workflow_dispatch` promotion flow (`staging` -> `production`).
+- Keep production secrets in GitHub environments or a secret manager; avoid long-lived local `.env.production` storage.
 
 ### Recommended Resilience Overrides (Production)
 
@@ -282,6 +292,8 @@ The CI workflow supports manual promotion via `workflow_dispatch`:
 3. `staging` deploy runs first for any production promotion.
 4. `production` deploy runs only after staging passes.
 5. Production smoke failure triggers automatic rollback to the previously deployed commit.
+
+The same flow applies whether the target host is a generic VPS or a GCP Compute Engine VM, as long as SSH access and Docker prerequisites are satisfied.
 
 Required GitHub environment secrets (set for both `staging` and `production`):
 - `SSH_HOST`
