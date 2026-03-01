@@ -4,6 +4,8 @@ import { z } from 'zod';
 dotenv.config();
 
 const MIN_PRODUCTION_SECRET_LENGTH = 32;
+const emptyStringToUndefined = (value: unknown): unknown =>
+  typeof value === 'string' && value.trim() === '' ? undefined : value;
 
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -48,9 +50,9 @@ const envSchema = z.object({
   VECTOR_CIRCUIT_OPEN_MS: z.coerce.number().default(30000),
   STREAM_REQUEST_TTL_SECONDS: z.coerce.number().default(120),
   DATA_RETENTION_DAYS: z.coerce.number().default(180),
-  RETENTION_JOB_AUTH_TOKEN: z.string().optional(),
-  RETENTION_JOB_OIDC_AUDIENCE: z.string().url().optional(),
-  RETENTION_JOB_ALLOWED_SERVICE_ACCOUNTS: z.string().optional(),
+  RETENTION_JOB_AUTH_TOKEN: z.preprocess(emptyStringToUndefined, z.string().optional()),
+  RETENTION_JOB_OIDC_AUDIENCE: z.preprocess(emptyStringToUndefined, z.string().url().optional()),
+  RETENTION_JOB_ALLOWED_SERVICE_ACCOUNTS: z.preprocess(emptyStringToUndefined, z.string().optional()),
   SHUTDOWN_TIMEOUT_MS: z.coerce.number().default(15000),
   COOKIE_SECURE: z.enum(['true', 'false']).optional(),
 });
