@@ -6,7 +6,7 @@ Reviewer: Staff/Principal Engineering Review (evidence-based)
 
 ## Executive Summary
 
-Current state (2026-03-01): the app is production MVP-ready with validated staged promotion. GitHub Actions `workflow_dispatch` runs `#31` (staging) and `#32` (production) both completed successfully on 2026-02-28 UTC.
+Current state (2026-03-01): the app is production MVP-ready with validated staged promotion. GitHub Actions `workflow_dispatch` runs `#31`/`#32` (2026-02-28 UTC) and `#41` (2026-03-01 UTC) completed successfully through production deployment and smoke verification.
 
 Top 5 remaining issues to address next:
 1. **Observability is still logging-first** (no metrics/tracing/SLO instrumentation).
@@ -54,6 +54,9 @@ Resolved since 2026-02-28:
 Still open:
 - F-OBS-01 and F-OBS-02 metrics/tracing/SLO and chat correlation enrichment.
 - F-SEC-02 privacy governance endpoints/retention policy enforcement.
+- F-REL-03 resilience policy gaps (retry/backoff/circuit-breakers).
+- RAG evaluation remains non-blocking in CI (`continue-on-error: true`).
+- Compliance hardening extensions (artifact attestations/signing and stricter deployment protection policy).
 
 ## Phase A - Architecture & Data Flow Discovery
 
@@ -86,7 +89,7 @@ Streaming:
 - Two-step secure stream flow:
   - `POST /chat/stream/start` (`server/src/routes/chat.ts:72`)
   - `GET /chat/stream?stream_id=...` (`server/src/routes/chat.ts:103`)
-- Pending stream state held in memory map: `server/src/services/chatStreamRegistry.ts:18`
+- Pending stream requests are persisted in shared datastore (`pending_stream_requests`) with TTL-based expiry handling.
 
 Tool/function calling layer:
 - None found in backend services/routes.
@@ -99,7 +102,7 @@ File upload pipeline:
 
 1. User authenticates in SPA (`client/src/pages/AuthPage.tsx`) via cookie-based auth endpoints.
 2. UI calls `POST /chat/stream/start` with message/module/session hints (`client/src/lib/api.ts`, `server/src/routes/chat.ts:72`).
-3. API stores pending request in in-memory registry keyed by `stream_id` (`server/src/services/chatStreamRegistry.ts`).
+3. API stores pending request in shared datastore keyed by `stream_id` (store-backed pending stream request methods).
 4. UI opens `EventSource` to `GET /chat/stream?stream_id=...` (`client/src/lib/api.ts`).
 5. API consumes pending request, persists user message (`server/src/routes/chat.ts:135`), retrieves context from vector store (`server/src/routes/chat.ts:148`), calls LLM (`server/src/routes/chat.ts:155`), persists assistant message (`server/src/routes/chat.ts:163`), and emits SSE events `meta`, `token`, `done` (`server/src/routes/chat.ts:183+`).
 6. UI streams tokens and renders result (`client/src/hooks/useSSEChat.ts`).
@@ -175,13 +178,17 @@ Resolution:
 - Added `wrapAsync()` across async handlers so exceptions flow through `next(err)` into centralized error handling.
 
 ### F-REL-02 - Pending stream registry is in-process memory only
-Severity: High
-Evidence:
-- `new Map` in `server/src/services/chatStreamRegistry.ts:18`
-Impact:
+Severity (baseline): High
+Status (2026-03-01): Resolved
+Baseline evidence:
+- Pending stream requests were previously held in-process in a map, which did not survive restarts and was not replica-safe.
+Current evidence:
+- Pending stream request lifecycle is now handled through shared datastore methods in `server/src/store/types.ts`, `server/src/store/postgresStore.ts`, and `server/src/store/inMemoryStore.ts`.
+- Chat routes use store-backed create/consume operations in `server/src/routes/chat.ts`.
+Historical impact:
 - Breaks under multi-instance scaling and on process restarts (stream IDs lost).
-Recommended fix:
-- Move stream request registry to Redis with TTL, or collapse start/get into single authenticated POST stream endpoint.
+Resolution:
+- Replaced route-level in-memory registry with shared datastore persistence and explicit expiry handling.
 
 ### F-REL-03 - Provider/vector resilience lacks retries/backoff/circuit-breakers
 Severity: Medium
@@ -194,13 +201,17 @@ Recommended fix:
 - Add bounded retries with jitter for transient classes and per-provider circuit-breaker counters.
 
 ### F-REL-04 - Non-deterministic migration workflow for audited environments
-Severity: High
-Evidence:
-- `server/package.json:11` and `server/package.json:12` use `drizzle-kit push`.
-Impact:
+Severity (baseline): High
+Status (2026-03-01): Resolved
+Baseline evidence:
+- Runtime migration workflow previously relied on `drizzle-kit push`.
+Current evidence:
+- Migration flow now applies versioned SQL files via `server/scripts/migrate.ts`.
+- Scripts updated in `server/package.json` (`migrate`, `migrate:status`) and SQL migrations tracked under `server/drizzle/*.sql`.
+Historical impact:
 - Reduced change traceability and rollback confidence.
-Recommended fix:
-- Move to versioned migrations (`drizzle-kit generate` + checked-in SQL + gated apply).
+Resolution:
+- Switched to tracked versioned migration apply flow with `schema_migrations` state tracking.
 
 ## Observability
 
@@ -439,7 +450,7 @@ Additional implemented through 2026-03-01:
 - Stream request durability: moved pending stream request handling from in-process map to shared datastore persistence.
 - Migration control: replaced runtime `drizzle-kit push` usage with versioned SQL migration runner (`server/scripts/migrate.ts`) backed by `schema_migrations`.
 - Container hardening: API runtime switched to non-root user.
-- Deployment validation: successful staging + production promotions (`run #31` and `run #32` on 2026-02-28 UTC).
+- Deployment validation: successful staging + production promotions (`run #31` and `run #32` on 2026-02-28 UTC, plus `run #41` on 2026-03-01 UTC).
 
 Validation after changes:
 - `npm run lint` passed
