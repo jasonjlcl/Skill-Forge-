@@ -5,7 +5,6 @@ import type { AppDeps } from '../domain/deps.js';
 import { requireAuth } from '../middleware/auth.js';
 import { wrapAsync } from '../middleware/async.js';
 import { requireCsrf } from '../middleware/csrf.js';
-import { consumeStreamRequest, registerStreamRequest } from '../services/chatStreamRegistry.js';
 import { detectLanguage } from '../services/language.js';
 import {
   getSafetyPolicyVersion,
@@ -101,12 +100,20 @@ export const createChatRouter = (deps: AppDeps): Router => {
         }
       }
 
-      const streamId = registerStreamRequest(req.user.id, {
-        sessionId,
-        message,
-        module,
-        topK,
-        timeSeconds,
+      await deps.store.purgeExpiredPendingStreamRequests();
+
+      const streamId = randomUUID();
+      await deps.store.createPendingStreamRequest({
+        id: streamId,
+        userId: req.user.id,
+        request: {
+          sessionId,
+          message,
+          module,
+          topK,
+          timeSeconds,
+        },
+        expiresAt: new Date(Date.now() + deps.env.streamRequestTtlSeconds * 1000),
       });
 
       res.status(201).json({
@@ -126,7 +133,10 @@ export const createChatRouter = (deps: AppDeps): Router => {
         return;
       }
 
-      const pending = consumeStreamRequest(req.user.id, parsed.data.stream_id);
+      const pending = await deps.store.consumePendingStreamRequest({
+        id: parsed.data.stream_id,
+        userId: req.user.id,
+      });
       if (!pending) {
         res.status(404).json({ error: 'Stream request not found or expired' });
         return;

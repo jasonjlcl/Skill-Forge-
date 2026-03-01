@@ -10,7 +10,7 @@ import type {
   TrainingSession,
   User,
 } from '../domain/types.js';
-import type { DataStore } from './types.js';
+import type { DataStore, PendingStreamRequest } from './types.js';
 
 const DEFAULT_MODULE = 'General Onboarding';
 
@@ -22,6 +22,10 @@ export class InMemoryStore implements DataStore {
   private quizQuestions: QuizQuestion[] = [];
   private quizAnswers: QuizAnswer[] = [];
   private moduleProgress: ModuleProgress[] = [];
+  private pendingStreamRequests = new Map<
+    string,
+    { id: string; userId: string; request: PendingStreamRequest; expiresAt: Date }
+  >();
 
   async createUser(input: {
     email: string;
@@ -137,6 +141,58 @@ export class InMemoryStore implements DataStore {
     return this.messages
       .filter((entry) => entry.sessionId === sessionId)
       .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+  }
+
+  async createPendingStreamRequest(input: {
+    id: string;
+    userId: string;
+    request: PendingStreamRequest;
+    expiresAt: Date;
+  }): Promise<void> {
+    this.pendingStreamRequests.set(input.id, {
+      id: input.id,
+      userId: input.userId,
+      request: input.request,
+      expiresAt: input.expiresAt,
+    });
+  }
+
+  async consumePendingStreamRequest(input: {
+    id: string;
+    userId: string;
+    now?: Date;
+  }): Promise<PendingStreamRequest | null> {
+    const existing = this.pendingStreamRequests.get(input.id);
+    if (!existing || existing.userId !== input.userId) {
+      return null;
+    }
+
+    this.pendingStreamRequests.delete(input.id);
+
+    const now = input.now ?? new Date();
+    if (existing.expiresAt.getTime() <= now.getTime()) {
+      return null;
+    }
+
+    return {
+      sessionId: existing.request.sessionId,
+      message: existing.request.message,
+      module: existing.request.module,
+      topK: existing.request.topK,
+      timeSeconds: existing.request.timeSeconds,
+    };
+  }
+
+  async purgeExpiredPendingStreamRequests(now?: Date): Promise<number> {
+    const cutoff = now ?? new Date();
+    let purged = 0;
+    for (const [id, entry] of this.pendingStreamRequests.entries()) {
+      if (entry.expiresAt.getTime() <= cutoff.getTime()) {
+        this.pendingStreamRequests.delete(id);
+        purged += 1;
+      }
+    }
+    return purged;
   }
 
   async createQuizAttempt(input: {

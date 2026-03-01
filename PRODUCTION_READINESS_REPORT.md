@@ -9,11 +9,11 @@ Reviewer: Staff/Principal Engineering Review (evidence-based)
 Current state (2026-03-01): the app is production MVP-ready with validated staged promotion. GitHub Actions `workflow_dispatch` runs `#31` (staging) and `#32` (production) both completed successfully on 2026-02-28 UTC.
 
 Top 5 remaining issues to address next:
-1. **Stream registry is in-process memory only** (`chatStreamRegistry`), so it is not horizontally safe.
-2. **Migration apply flow remains non-versioned** (`drizzle-kit push`), limiting audited change control.
-3. **Observability is still logging-first** (no metrics/tracing/SLO instrumentation).
-4. **Governance/privacy controls are incomplete** (retention/export/delete endpoints not implemented).
-5. **Resilience/retrieval maturity gaps remain** (no bounded retry/circuit-breaker policy; lexical-hash embedding quality ceiling).
+1. **Observability is still logging-first** (no metrics/tracing/SLO instrumentation).
+2. **Governance/privacy controls are incomplete** (retention/export/delete endpoints not implemented).
+3. **Resilience/retrieval maturity gaps remain** (no bounded retry/circuit-breaker policy; lexical-hash embedding quality ceiling).
+4. **RAG evaluation is still non-blocking in CI** (`continue-on-error: true`), so regressions do not block promotions.
+5. **Compliance hardening can be strengthened** (artifact attestations/signing and stricter branch/deploy protection policy).
 
 Major improvements completed since baseline:
 - PR1 delivered async error boundaries, LLM output cap/context budgeting enforcement, and DB hot-path indexes.
@@ -41,6 +41,8 @@ Interpretation:
 
 Resolved since 2026-02-28:
 - F-REL-01 async error boundary gap.
+- F-REL-02 stream registry durability/horizontal scaling (pending stream requests now stored in shared datastore).
+- F-REL-04 versioned migration apply workflow (versioned SQL migrations + tracked apply runner).
 - F-PERF-01 and F-PERF-02 output/context budget enforcement.
 - F-PERF-04 DB indexing gaps on key hot paths.
 - F-AI-01, F-AI-02, and F-AI-03 safety layer + prompt-injection sanitization + RAG eval script.
@@ -49,8 +51,6 @@ Resolved since 2026-02-28:
 - F-DEP-03 and F-MNT-01 documentation drift on architecture/security guidance.
 
 Still open:
-- F-REL-02 stream registry durability/horizontal scaling.
-- F-REL-04 versioned migration apply workflow.
 - F-OBS-01 and F-OBS-02 metrics/tracing/SLO and chat correlation enrichment.
 - F-SEC-02 privacy governance endpoints/retention policy enforcement.
 - F-PERF-03 semantic embedding quality upgrade.
@@ -388,8 +388,7 @@ Recommended fix:
 Now (1-3 weeks, highest impact)
 - PR3: add metrics/tracing/SLO skeleton and chat correlation fields (`sessionId`, `streamId`).
 - PR5: implement governance/privacy controls (retention, user export/delete endpoints, audit trail events).
-- Replace in-memory stream registry with Redis-backed TTL registry (or single-step authenticated stream endpoint).
-- Replace `drizzle-kit push` runtime migration flow with versioned SQL apply workflow.
+- Move `rag-eval` from non-blocking to policy-gated once baseline stability is proven.
 
 Next (3-8 weeks)
 - Add bounded retry/backoff and circuit-breaker policy for provider/vector dependencies.
@@ -413,8 +412,8 @@ Later (8+ weeks)
 - [x] DB indexes for message/session hot paths
 - [x] CI secret scanning + container vuln scanning
 - [x] Staged deploy with environment approvals and smoke validation
-- [ ] Versioned migrations with approval gates
-- [ ] Stream registry durable across replicas/restarts
+- [x] Versioned migrations with approval gates
+- [x] Stream registry durable across replicas/restarts
 - [ ] Metrics/traces/SLO alerting in production
 - [ ] Governance privacy endpoints (export/delete/retention)
 
@@ -432,6 +431,8 @@ Additional implemented through 2026-03-01:
 - PR1 (reliability/cost): async wrapper, output/context guardrails, DB indexes, tests.
 - PR2 (AI safety/RAG): output moderation, prompt-injection sanitization/tagging, `scripts/eval-rag.ts`, CI rag-eval job.
 - PR4 (CI/CD): TruffleHog + CodeQL + Trivy gates, staged approvals, smoke test, rollback automation.
+- Stream request durability: moved pending stream request handling from in-process map to shared datastore persistence.
+- Migration control: replaced runtime `drizzle-kit push` usage with versioned SQL migration runner (`server/scripts/migrate.ts`) backed by `schema_migrations`.
 - Container hardening: API runtime switched to non-root user.
 - Deployment validation: successful staging + production promotions (`run #31` and `run #32` on 2026-02-28 UTC).
 

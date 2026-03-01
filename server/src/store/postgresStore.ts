@@ -1,8 +1,9 @@
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, gt, lte, sql } from 'drizzle-orm';
 import { getDb } from '../db/index.js';
 import {
   messages,
   moduleProgress,
+  pendingStreamRequests,
   quizAnswers,
   quizAttempts,
   quizQuestions,
@@ -20,7 +21,7 @@ import type {
   TrainingSession,
   User,
 } from '../domain/types.js';
-import type { DataStore } from './types.js';
+import type { DataStore, PendingStreamRequest } from './types.js';
 
 const toSkillLevel = (value: string): SkillLevel => {
   if (value === 'advanced' || value === 'intermediate' || value === 'beginner') {
@@ -172,6 +173,68 @@ export class PostgresStore implements DataStore {
       ...entry,
       role: entry.role as ChatMessage['role'],
     }));
+  }
+
+  async createPendingStreamRequest(input: {
+    id: string;
+    userId: string;
+    request: PendingStreamRequest;
+    expiresAt: Date;
+  }): Promise<void> {
+    const db = assertDb();
+    await db.insert(pendingStreamRequests).values({
+      id: input.id,
+      userId: input.userId,
+      sessionId: input.request.sessionId,
+      message: input.request.message,
+      module: input.request.module,
+      topK: input.request.topK,
+      timeSeconds: input.request.timeSeconds,
+      expiresAt: input.expiresAt,
+    });
+  }
+
+  async consumePendingStreamRequest(input: {
+    id: string;
+    userId: string;
+    now?: Date;
+  }): Promise<PendingStreamRequest | null> {
+    const db = assertDb();
+    const now = input.now ?? new Date();
+
+    const [row] = await db
+      .delete(pendingStreamRequests)
+      .where(
+        and(
+          eq(pendingStreamRequests.id, input.id),
+          eq(pendingStreamRequests.userId, input.userId),
+          gt(pendingStreamRequests.expiresAt, now),
+        ),
+      )
+      .returning();
+
+    if (!row) {
+      return null;
+    }
+
+    return {
+      sessionId: row.sessionId ?? undefined,
+      message: row.message,
+      module: row.module ?? undefined,
+      topK: row.topK ?? undefined,
+      timeSeconds: row.timeSeconds ?? undefined,
+    };
+  }
+
+  async purgeExpiredPendingStreamRequests(now?: Date): Promise<number> {
+    const db = assertDb();
+    const cutoff = now ?? new Date();
+    const rows = await db
+      .delete(pendingStreamRequests)
+      .where(lte(pendingStreamRequests.expiresAt, cutoff))
+      .returning({ id: pendingStreamRequests.id });
+
+    return rows.length;
   }
 
   async createQuizAttempt(input: {

@@ -118,7 +118,7 @@ Implemented CI/CD security gates and controlled promotion:
 
 - Frontend: React 18 + Vite 6 + TypeScript 5 + Tailwind CSS
 - Backend: Node.js 20 + Express 4 + TypeScript 5
-- Data: PostgreSQL 16 + Drizzle ORM (current migration flow uses `drizzle-kit push`)
+- Data: PostgreSQL 16 + Drizzle ORM with versioned SQL migrations (`server/drizzle/*.sql`)
 - Retrieval: ChromaDB 0.5.x (`CHROMA_URL`) with in-memory fallback outside production
 - GenAI Providers: Gemini 1.5 Flash (primary) and OpenAI `gpt-4o-mini` (fallback)
 - Containers: API on `node:20-alpine` (non-root runtime), web on `nginx:1.29-alpine`
@@ -195,7 +195,8 @@ All auth/chat/quiz/me routes are also mounted under `/api/*`.
 - `npm run build` build server + client
 - `npm run test` run server tests
 - `npm run lint` lint server + client
-- `npm run migrate` run Drizzle `push` migration workflow
+- `npm run migrate` apply versioned SQL migrations from `server/drizzle`
+- `npm --prefix server run migrate:status` show applied vs pending migrations
 - `npm run ingest` ingest training docs
 - `npm run eval:rag` run RAG eval script
 - `npm run eval:rag:ci` CI wrapper for the RAG eval baseline

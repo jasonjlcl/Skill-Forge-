@@ -10,6 +10,14 @@ import type {
   User,
 } from '../domain/types.js';
 
+export interface PendingStreamRequest {
+  sessionId?: string;
+  message: string;
+  module?: string;
+  topK?: number;
+  timeSeconds?: number;
+}
+
 export interface DataStore {
   createUser(input: {
     email: string;
@@ -39,6 +47,19 @@ export interface DataStore {
     content: string;
   }): Promise<ChatMessage>;
   listMessages(sessionId: string): Promise<ChatMessage[]>;
+
+  createPendingStreamRequest(input: {
+    id: string;
+    userId: string;
+    request: PendingStreamRequest;
+    expiresAt: Date;
+  }): Promise<void>;
+  consumePendingStreamRequest(input: {
+    id: string;
+    userId: string;
+    now?: Date;
+  }): Promise<PendingStreamRequest | null>;
+  purgeExpiredPendingStreamRequests(now?: Date): Promise<number>;
 
   createQuizAttempt(input: {
     userId: string;

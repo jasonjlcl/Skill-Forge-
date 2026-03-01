@@ -8,8 +8,9 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/src/index.js",
     "db:generate": "drizzle-kit generate",
-    "db:push": "drizzle-kit push",
-    "migrate": "drizzle-kit push",
+    "db:push:dev": "drizzle-kit push",
+    "migrate": "tsx scripts/migrate.ts",
+    "migrate:status": "tsx scripts/migrate.ts --status",
     "lint": "eslint \"src/**/*.ts\" \"tests/**/*.ts\"",
     "test": "jest --runInBand"
   },

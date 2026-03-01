@@ -58,6 +58,30 @@ export const messages = pgTable(
   }),
 );
 
+export const pendingStreamRequests = pgTable(
+  'pending_stream_requests',
+  {
+    id: uuid('id').primaryKey(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    sessionId: uuid('session_id'),
+    message: text('message').notNull(),
+    module: text('module'),
+    topK: integer('top_k'),
+    timeSeconds: integer('time_seconds'),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    pendingStreamRequestsUserExpiresIdx: index('pending_stream_requests_user_expires_idx').on(
+      table.userId,
+      table.expiresAt,
+    ),
+    pendingStreamRequestsExpiresIdx: index('pending_stream_requests_expires_idx').on(table.expiresAt),
+  }),
+);
+
 export const quizAttempts = pgTable(
   'quiz_attempts',
   {
@@ -146,6 +170,7 @@ export const schema = {
   users,
   sessions,
   messages,
+  pendingStreamRequests,
   quizAttempts,
   quizQuestions,
   quizAnswers,
