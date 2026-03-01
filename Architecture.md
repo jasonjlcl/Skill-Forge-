@@ -9,9 +9,10 @@ Skill Forge is a React SPA + Express backend platform for onboarding chat, quizz
 ```mermaid
 flowchart LR
   User --> Browser
-  Browser --> SPA["React SPA (Vite)"]
-  SPA -->|HTTPS JSON| API["Express API"]
-  SPA -->|HTTPS SSE| SSE["/api/chat/stream"]
+  Browser --> WEB["NGINX Web Edge"]
+  WEB --> SPA["React SPA (Vite)"]
+  WEB -->|/api| API["Express API"]
+  WEB -->|/api/chat/stream| SSE["SSE endpoint"]
 
   API --> DB[("PostgreSQL via Drizzle")]
   API --> VS[("ChromaDB / InMemory Vector Store")]
@@ -47,6 +48,7 @@ sequenceDiagram
 - Frontend: `client/src` React SPA, auth/chat/quiz/analytics UI.
 - Backend: `server/src` routes, middleware, app wiring.
 - Data: PostgreSQL for transactional data, ChromaDB (or in-memory fallback) for retrieval.
+  - Pending stream requests are persisted with TTL/expiry semantics for restart and replica safety.
 - AI:
   - `services/gemini.ts` provider orchestration (Gemini -> OpenAI -> deterministic fallback).
   - `services/vectorStore.ts` retrieval and context budgeting.
@@ -79,6 +81,13 @@ sequenceDiagram
 - `quiz_attempts(user_id, started_at)`
 - `quiz_questions(attempt_id, position)`
 - `quiz_answers(attempt_id, answered_at)`
+- `pending_stream_requests(user_id, expires_at)`
+- `pending_stream_requests(expires_at)`
 
 Versioned migration:
 - `server/drizzle/0001_hot_path_indexes.sql`
+- `server/drizzle/0002_pending_stream_requests.sql`
+
+Migration apply flow:
+- Versioned SQL migrations are applied by `server/scripts/migrate.ts`.
+- Applied migration state is tracked in `schema_migrations`.

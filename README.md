@@ -18,7 +18,7 @@ Architecture doc: [`Architecture.md`](./Architecture.md)
 1. User signs up / signs in.
 2. User starts learning in a module (for example `Safety Basics`, `Machine Setup`).
 3. User asks questions in chat:
-   - API stores a pending stream request.
+   - API stores a pending stream request in a shared datastore with TTL expiry.
    - API retrieves relevant context chunks.
    - API calls Gemini/OpenAI (or deterministic fallback) and streams SSE events.
 4. User can start quizzes and submit answers with immediate feedback.
@@ -118,7 +118,7 @@ Implemented CI/CD security gates and controlled promotion:
 
 - Frontend: React 18 + Vite 6 + TypeScript 5 + Tailwind CSS
 - Backend: Node.js 20 + Express 4 + TypeScript 5
-- Data: PostgreSQL 16 + Drizzle ORM with versioned SQL migrations (`server/drizzle/*.sql`)
+- Data: PostgreSQL 16 + Drizzle ORM with versioned SQL migrations (`server/drizzle/*.sql`) and durable pending stream request persistence
 - Retrieval: ChromaDB 0.5.x (`CHROMA_URL`) with semantic OpenAI embeddings (`text-embedding-3-small` default)
 - GenAI Providers: Gemini 1.5 Flash (primary) and OpenAI `gpt-4o-mini` (fallback)
 - Containers: API on `node:20-alpine` (non-root runtime), web on `nginx:1.29-alpine`
