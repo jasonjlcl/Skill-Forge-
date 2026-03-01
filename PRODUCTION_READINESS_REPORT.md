@@ -10,11 +10,11 @@ Current state (2026-03-01): the app is production MVP-ready with validated stage
 Deployment model: promotion is SSH-based and host-agnostic (`scripts/prod/deploy-remote.sh`), which is compatible with Linux VM targets such as GCP Compute Engine when SSH/Docker prerequisites are met.
 
 Top 5 remaining issues to address next:
-1. **Governance/privacy controls are incomplete** (retention/export/delete endpoints not implemented).
-2. **RAG evaluation is still non-blocking in CI** (`continue-on-error: true`), so regressions do not block promotions.
-3. **Streaming UX is replay-based, not provider-native token streaming yet**.
-4. **Compliance hardening can be strengthened** (artifact attestations/signing and stricter branch/deploy protection policy).
-5. **Observability still needs production operationalization** (exporters/dashboards/SLO alerting on top of newly added instrumentation).
+1. **Streaming UX is replay-based, not provider-native token streaming yet**.
+2. **Compliance hardening can be strengthened** (artifact attestations/signing and stricter branch/deploy protection policy).
+3. **Observability still needs production operationalization** (exporters/dashboards/SLO alerting on top of newly added instrumentation).
+4. **Governance extensions remain** (audit trail depth, policy reporting, and automated lifecycle scheduling hardening).
+5. **RAG threshold policy should be tuned with production evidence over time**.
 
 Major improvements completed since baseline:
 - PR1 delivered async error boundaries, LLM output cap/context budgeting enforcement, and DB hot-path indexes.
@@ -56,9 +56,9 @@ Resolved since 2026-02-28:
 - F-DEP-03 and F-MNT-01 documentation drift on architecture/security guidance.
 
 Still open:
-- F-SEC-02 privacy governance endpoints/retention policy enforcement.
-- RAG evaluation remains non-blocking in CI (`continue-on-error: true`).
 - Compliance hardening extensions (artifact attestations/signing and stricter deployment protection policy).
+- Observability operationalization in production (exporters/dashboards/SLO alerts).
+- Ongoing RAG threshold calibration and dataset expansion as coverage grows.
 
 ## Phase A - Architecture & Data Flow Discovery
 
@@ -146,7 +146,8 @@ Recommended fix:
 - Keep double-submit if desired, but pair with stronger CSP/XSS hardening and optional rotating anti-CSRF token on auth boundaries.
 
 ### F-SEC-02 - Data retention/privacy controls not defined for chat content
-Severity: High
+Severity (baseline): High
+Status (2026-03-01): Resolved
 Evidence:
 - Chat content persistence: `server/src/db/schema.ts:35`, `server/src/store/postgresStore.ts:150`
 - No retention/deletion workflow in codebase.
@@ -154,6 +155,10 @@ Impact:
 - Potential long-term PII retention and compliance risk.
 Recommended fix:
 - Add retention policy (TTL/archival), user data deletion/export endpoints, and documented policy.
+Resolution:
+- Added governance endpoints for user data export/deletion and retention runs (`server/src/routes/privacy.ts`).
+- Added shared datastore privacy primitives and retention purge workflows (`server/src/store/types.ts`, `server/src/store/postgresStore.ts`, `server/src/store/inMemoryStore.ts`).
+- Added runnable retention job entrypoint (`server/scripts/retention.ts`) and env policy knob (`DATA_RETENTION_DAYS`).
 
 ### F-SEC-03 - Local secret hygiene risk observed in runtime env file
 Severity: High
@@ -433,9 +438,9 @@ Recommended fix:
 ## Now / Next / Later Roadmap (Updated 2026-03-01)
 
 Now (1-3 weeks, highest impact)
-- PR5: implement governance/privacy controls (retention, user export/delete endpoints, audit trail events).
-- Move `rag-eval` from non-blocking to policy-gated once baseline stability is proven.
 - Operationalize observability baseline: OTEL exporters, dashboards, and SLO alerts over the new metrics/spans.
+- Extend governance controls with richer audit trails and compliance reporting.
+- Add richer RAG eval dataset coverage and tighten thresholds iteratively based on production signals.
 
 Next (3-8 weeks)
 - Add retrieval-quality telemetry and cost/latency budgets for embedding + query paths.
@@ -443,9 +448,9 @@ Next (3-8 weeks)
 - Tune circuit/retry thresholds using production latency/error telemetry and documented SLOs.
 
 Later (8+ weeks)
-- Move RAG eval from non-blocking to policy-gated once baseline is stable.
 - Define and enforce target SLOs with paging thresholds and error-budget policy.
 - Extend governance controls to include scheduled data lifecycle jobs and compliance reporting.
+- Promote RAG eval from baseline checks to broader regression suites (multi-turn, adversarial, domain drift).
 
 ## Minimum Safe-to-Ship Baseline Checklist
 
@@ -462,7 +467,7 @@ Later (8+ weeks)
 - [x] Versioned migrations with approval gates
 - [x] Stream registry durable across replicas/restarts
 - [ ] Metrics/traces/SLO alerting in production
-- [ ] Governance privacy endpoints (export/delete/retention)
+- [x] Governance privacy endpoints (export/delete/retention)
 
 ## Phase D - Summary of modifications made in this review
 
@@ -484,6 +489,7 @@ Additional implemented through 2026-03-01:
 - Stream request durability: moved pending stream request handling from in-process map to shared datastore persistence.
 - Migration control: replaced runtime `drizzle-kit push` usage with versioned SQL migration runner (`server/scripts/migrate.ts`) backed by `schema_migrations`.
 - Container hardening: API runtime switched to non-root user.
+- Governance/privacy controls: added authenticated data export/delete endpoints and retention purge job workflow.
 - Deployment validation: successful staging + production promotions (`run #31` and `run #32` on 2026-02-28 UTC, plus `run #41` on 2026-03-01 UTC).
 
 Validation after changes:

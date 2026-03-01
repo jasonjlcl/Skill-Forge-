@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import request from 'supertest';
 import { createApp } from '../src/app.js';
 import type { AppOverrides } from '../src/app.js';
@@ -5,6 +6,8 @@ import type { QuizQuestionDraft } from '../src/domain/types.js';
 import type { LlmClient } from '../src/services/gemini.js';
 import { InMemoryVectorStore } from '../src/services/vectorStore.js';
 import { InMemoryStore } from '../src/store/inMemoryStore.js';
+
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 const toCookieHeader = (setCookie: string[] | undefined): string =>
   (setCookie ?? []).map((entry) => entry.split(';')[0]).join('; ');
@@ -87,6 +90,8 @@ const buildTestApp = () => {
       loginMaxAttempts: 5,
       loginLockoutMinutes: 15,
       streamRequestTtlSeconds: 120,
+      DATA_RETENTION_DAYS: 30,
+      dataRetentionDays: 30,
       CLIENT_URL: 'http://localhost:5173',
       CHROMA_URL: undefined,
       CHROMA_COLLECTION: 'test_collection',
@@ -154,6 +159,173 @@ describe('API', () => {
 
     expect(answer.body.correct).toBe(true);
     expect(answer.body.answeredCount).toBe(1);
+  });
+
+  it('exports authenticated user data for privacy governance', async () => {
+    const { app, store } = buildTestApp();
+
+    const register = await request(app)
+      .post('/auth/register')
+      .send({ email: 'export@example.com', password: 'strong-pass-123', language: 'en' })
+      .expect(201);
+
+    const userId = register.body.user.id as string;
+    const setCookie = normalizeSetCookie(register.headers['set-cookie']);
+    const cookieHeader = toCookieHeader(setCookie);
+
+    const session = await store.createSession({
+      userId,
+      module: 'Safety Basics',
+      id: randomUUID(),
+    });
+    await store.createMessage({
+      sessionId: session.id,
+      role: 'user',
+      content: 'What should I check first?',
+    });
+    await store.createMessage({
+      sessionId: session.id,
+      role: 'assistant',
+      content: 'Verify PPE before machine servicing.',
+    });
+
+    const attempt = await store.createQuizAttempt({
+      userId,
+      module: 'Safety Basics',
+      totalQuestions: 1,
+    });
+    const question = await store.createQuizQuestion({
+      attemptId: attempt.id,
+      position: 1,
+      prompt: 'What is the first step?',
+      type: 'multiple_choice',
+      options: ['A', 'B', 'C'],
+      answerKey: 'A',
+      explanation: 'Start with PPE checks.',
+    });
+    await store.createQuizAnswer({
+      attemptId: attempt.id,
+      questionId: question.id,
+      userAnswer: 'A',
+      isCorrect: true,
+      explanation: 'Correct answer.',
+    });
+    await store.createPendingStreamRequest({
+      id: randomUUID(),
+      userId,
+      request: {
+        sessionId: session.id,
+        message: 'Pending question',
+      },
+      expiresAt: new Date(Date.now() + DAY_MS),
+    });
+
+    const exported = await request(app).get('/privacy/export').set('Cookie', cookieHeader).expect(200);
+
+    expect(exported.body.user.email).toBe('export@example.com');
+    expect(exported.body.sessions).toHaveLength(1);
+    expect(exported.body.sessions[0].messages).toHaveLength(2);
+    expect(exported.body.quizAttempts).toHaveLength(1);
+    expect(exported.body.quizAttempts[0].questions).toHaveLength(1);
+    expect(exported.body.quizAttempts[0].answers).toHaveLength(1);
+    expect(exported.body.pendingStreamRequests).toHaveLength(1);
+  });
+
+  it('runs retention purge for stale user data', async () => {
+    const { app, store } = buildTestApp();
+
+    const register = await request(app)
+      .post('/auth/register')
+      .send({ email: 'retention@example.com', password: 'strong-pass-123', language: 'en' })
+      .expect(201);
+
+    const userId = register.body.user.id as string;
+    const setCookie = normalizeSetCookie(register.headers['set-cookie']);
+    const cookieHeader = toCookieHeader(setCookie);
+    const csrfToken = extractCookieValue(setCookie, 'csrf_token');
+    expect(csrfToken).toBeTruthy();
+
+    const staleSession = await store.createSession({
+      userId,
+      module: 'Old Module',
+      id: randomUUID(),
+    });
+    staleSession.lastActiveAt = new Date(Date.now() - 45 * DAY_MS);
+    await store.createMessage({
+      sessionId: staleSession.id,
+      role: 'user',
+      content: 'Old session message',
+    });
+
+    const staleAttempt = await store.createQuizAttempt({
+      userId,
+      module: 'Old Module',
+      totalQuestions: 1,
+    });
+    staleAttempt.startedAt = new Date(Date.now() - 45 * DAY_MS);
+    const staleQuestion = await store.createQuizQuestion({
+      attemptId: staleAttempt.id,
+      position: 1,
+      prompt: 'Old question',
+      type: 'short_answer',
+      options: null,
+      answerKey: 'old',
+      explanation: 'old',
+    });
+    await store.createQuizAnswer({
+      attemptId: staleAttempt.id,
+      questionId: staleQuestion.id,
+      userAnswer: 'old',
+      isCorrect: true,
+      explanation: 'old',
+    });
+    await store.createPendingStreamRequest({
+      id: randomUUID(),
+      userId,
+      request: {
+        sessionId: staleSession.id,
+        message: 'Expired pending message',
+      },
+      expiresAt: new Date(Date.now() - DAY_MS),
+    });
+
+    const retention = await request(app)
+      .post('/privacy/retention/run')
+      .set('Cookie', cookieHeader)
+      .set('x-csrf-token', csrfToken as string)
+      .send({ days: 30 })
+      .expect(200);
+
+    expect(retention.body.retentionDays).toBe(30);
+    expect(retention.body.purged.sessionsDeleted).toBe(1);
+    expect(retention.body.purged.messagesDeleted).toBe(1);
+    expect(retention.body.purged.quizAttemptsDeleted).toBe(1);
+    expect(retention.body.purged.quizQuestionsDeleted).toBe(1);
+    expect(retention.body.purged.quizAnswersDeleted).toBe(1);
+    expect(retention.body.purged.pendingStreamRequestsDeleted).toBe(1);
+  });
+
+  it('deletes account data when confirmed via privacy endpoint', async () => {
+    const { app } = buildTestApp();
+
+    const register = await request(app)
+      .post('/auth/register')
+      .send({ email: 'delete@example.com', password: 'strong-pass-123', language: 'en' })
+      .expect(201);
+
+    const setCookie = normalizeSetCookie(register.headers['set-cookie']);
+    const cookieHeader = toCookieHeader(setCookie);
+    const csrfToken = extractCookieValue(setCookie, 'csrf_token');
+    expect(csrfToken).toBeTruthy();
+
+    await request(app)
+      .delete('/privacy')
+      .set('Cookie', cookieHeader)
+      .set('x-csrf-token', csrfToken as string)
+      .send({ confirmEmail: 'delete@example.com' })
+      .expect(204);
+
+    await request(app).get('/auth/me').set('Cookie', cookieHeader).expect(401);
   });
 
   it('rejects authenticated mutating requests without a CSRF token', async () => {

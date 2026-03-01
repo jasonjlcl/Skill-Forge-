@@ -19,6 +19,13 @@ interface RetrievalResult {
   topScore: number | null;
 }
 
+interface EvalPolicy {
+  minTop1: number;
+  minCases: number;
+  requireInjectionSanitization: boolean;
+  requireOutputModeration: boolean;
+}
+
 const DATASET: TrainingChunk[] = [
   {
     id: randomUUID(),
@@ -152,25 +159,79 @@ const printRetrievalReport = (results: RetrievalResult[]): void => {
   }
 };
 
+const parseNumberEnv = (name: string, fallback: number): number => {
+  const raw = process.env[name];
+  if (!raw) {
+    return fallback;
+  }
+
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`${name} must be a valid number.`);
+  }
+  return parsed;
+};
+
+const parseBooleanEnv = (name: string, fallback: boolean): boolean => {
+  const raw = process.env[name];
+  if (!raw) {
+    return fallback;
+  }
+
+  if (raw === 'true') {
+    return true;
+  }
+  if (raw === 'false') {
+    return false;
+  }
+
+  throw new Error(`${name} must be either "true" or "false".`);
+};
+
+const readPolicy = (): EvalPolicy => {
+  const minTop1 = parseNumberEnv('RAG_EVAL_MIN_TOP1', 0.75);
+  if (minTop1 < 0 || minTop1 > 1) {
+    throw new Error('RAG_EVAL_MIN_TOP1 must be between 0 and 1.');
+  }
+
+  const minCases = Math.floor(parseNumberEnv('RAG_EVAL_MIN_CASES', RETRIEVAL_CASES.length));
+  if (minCases < 1) {
+    throw new Error('RAG_EVAL_MIN_CASES must be at least 1.');
+  }
+
+  return {
+    minTop1,
+    minCases,
+    requireInjectionSanitization: parseBooleanEnv('RAG_EVAL_REQUIRE_INJECTION_SANITIZATION', true),
+    requireOutputModeration: parseBooleanEnv('RAG_EVAL_REQUIRE_OUTPUT_MODERATION', true),
+  };
+};
+
 const run = async (): Promise<void> => {
   const store = new InMemoryVectorStore();
   await store.upsert(DATASET);
+  const policy = readPolicy();
 
   const retrieval = await evaluateRetrieval(store);
   const injection = evaluateInjectionSanitization();
   const moderation = evaluateModeration();
 
-  const retrievalThreshold = 0.75;
-  const retrievalPassed = retrieval.top1Accuracy >= retrievalThreshold;
+  const enoughCases = retrieval.results.length >= policy.minCases;
+  const retrievalPassed = enoughCases && retrieval.top1Accuracy >= policy.minTop1;
+  const injectionPassed = !policy.requireInjectionSanitization || injection.passed;
+  const moderationPassed = !policy.requireOutputModeration || moderation.passed;
 
   printRetrievalReport(retrieval.results);
   console.log(
-    `[summary] retrievalTop1=${retrieval.top1Accuracy.toFixed(2)} threshold=${retrievalThreshold.toFixed(2)} passed=${retrievalPassed}`,
+    `[policy] minTop1=${policy.minTop1.toFixed(2)} minCases=${policy.minCases} requireInjectionSanitization=${policy.requireInjectionSanitization} requireOutputModeration=${policy.requireOutputModeration}`,
   );
-  console.log(`[summary] injectionSanitization passed=${injection.passed} detail=${injection.detail}`);
-  console.log(`[summary] outputModeration passed=${moderation.passed} detail=${moderation.detail}`);
+  console.log(
+    `[summary] retrievalTop1=${retrieval.top1Accuracy.toFixed(2)} threshold=${policy.minTop1.toFixed(2)} cases=${retrieval.results.length} minCases=${policy.minCases} passed=${retrievalPassed}`,
+  );
+  console.log(`[summary] injectionSanitization passed=${injectionPassed} detail=${injection.detail}`);
+  console.log(`[summary] outputModeration passed=${moderationPassed} detail=${moderation.detail}`);
 
-  const passed = retrievalPassed && injection.passed && moderation.passed;
+  const passed = retrievalPassed && injectionPassed && moderationPassed;
   console.log(`[result] ${passed ? 'PASS' : 'FAIL'}`);
   process.exitCode = passed ? 0 : 1;
 };

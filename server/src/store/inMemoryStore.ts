@@ -10,7 +10,12 @@ import type {
   TrainingSession,
   User,
 } from '../domain/types.js';
-import type { DataStore, PendingStreamRequest } from './types.js';
+import type {
+  DataRetentionPurgeResult,
+  DataStore,
+  PendingStreamRequest,
+  PrivacyDataExport,
+} from './types.js';
 
 const DEFAULT_MODULE = 'General Onboarding';
 
@@ -24,7 +29,13 @@ export class InMemoryStore implements DataStore {
   private moduleProgress: ModuleProgress[] = [];
   private pendingStreamRequests = new Map<
     string,
-    { id: string; userId: string; request: PendingStreamRequest; expiresAt: Date }
+    {
+      id: string;
+      userId: string;
+      request: PendingStreamRequest;
+      expiresAt: Date;
+      createdAt: Date;
+    }
   >();
 
   async createUser(input: {
@@ -154,6 +165,7 @@ export class InMemoryStore implements DataStore {
       userId: input.userId,
       request: input.request,
       expiresAt: input.expiresAt,
+      createdAt: new Date(),
     });
   }
 
@@ -386,6 +398,218 @@ export class InMemoryStore implements DataStore {
       totalTimeOnTaskSeconds: progress.reduce((sum, entry) => sum + entry.timeOnTaskSeconds, 0),
       moduleBreakdown,
       recentQuizScores,
+    };
+  }
+
+  async exportUserData(userId: string): Promise<PrivacyDataExport | null> {
+    const user = this.users.find((entry) => entry.id === userId);
+    if (!user) {
+      return null;
+    }
+
+    const sessionRows = this.sessions
+      .filter((entry) => entry.userId === userId)
+      .slice()
+      .sort((a, b) => a.startedAt.getTime() - b.startedAt.getTime());
+    const sessionIds = new Set(sessionRows.map((entry) => entry.id));
+    const sessionMessages = this.messages
+      .filter((entry) => sessionIds.has(entry.sessionId))
+      .slice()
+      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+
+    const messagesBySession = new Map<string, ChatMessage[]>();
+    for (const message of sessionMessages) {
+      const list = messagesBySession.get(message.sessionId);
+      if (list) {
+        list.push({ ...message });
+      } else {
+        messagesBySession.set(message.sessionId, [{ ...message }]);
+      }
+    }
+
+    const attemptRows = this.quizAttempts
+      .filter((entry) => entry.userId === userId)
+      .slice()
+      .sort((a, b) => a.startedAt.getTime() - b.startedAt.getTime());
+    const attemptIds = new Set(attemptRows.map((entry) => entry.id));
+
+    const questionsByAttempt = new Map<string, QuizQuestion[]>();
+    for (const question of this.quizQuestions) {
+      if (!attemptIds.has(question.attemptId)) {
+        continue;
+      }
+      const list = questionsByAttempt.get(question.attemptId);
+      if (list) {
+        list.push({ ...question });
+      } else {
+        questionsByAttempt.set(question.attemptId, [{ ...question }]);
+      }
+    }
+    for (const list of questionsByAttempt.values()) {
+      list.sort((a, b) => a.position - b.position);
+    }
+
+    const answersByAttempt = new Map<string, QuizAnswer[]>();
+    for (const answer of this.quizAnswers) {
+      if (!attemptIds.has(answer.attemptId)) {
+        continue;
+      }
+      const list = answersByAttempt.get(answer.attemptId);
+      if (list) {
+        list.push({ ...answer });
+      } else {
+        answersByAttempt.set(answer.attemptId, [{ ...answer }]);
+      }
+    }
+    for (const list of answersByAttempt.values()) {
+      list.sort((a, b) => a.answeredAt.getTime() - b.answeredAt.getTime());
+    }
+
+    const pendingStreamRequests = Array.from(this.pendingStreamRequests.values())
+      .filter((entry) => entry.userId === userId)
+      .slice()
+      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+      .map((entry) => ({
+        id: entry.id,
+        sessionId: entry.request.sessionId,
+        message: entry.request.message,
+        module: entry.request.module,
+        topK: entry.request.topK,
+        timeSeconds: entry.request.timeSeconds,
+        expiresAt: new Date(entry.expiresAt),
+        createdAt: new Date(entry.createdAt),
+      }));
+
+    return {
+      generatedAt: new Date(),
+      user: {
+        id: user.id,
+        email: user.email,
+        language: user.language,
+        skillLevel: user.skillLevel,
+        createdAt: new Date(user.createdAt),
+        lastLoginAt: user.lastLoginAt ? new Date(user.lastLoginAt) : null,
+      },
+      sessions: sessionRows.map((session) => ({
+        id: session.id,
+        module: session.module,
+        startedAt: new Date(session.startedAt),
+        lastActiveAt: new Date(session.lastActiveAt),
+        messages: (messagesBySession.get(session.id) ?? []).map((message) => ({
+          ...message,
+          createdAt: new Date(message.createdAt),
+        })),
+      })),
+      quizAttempts: attemptRows.map((attempt) => ({
+        id: attempt.id,
+        module: attempt.module,
+        startedAt: new Date(attempt.startedAt),
+        completedAt: attempt.completedAt ? new Date(attempt.completedAt) : null,
+        score: attempt.score,
+        totalQuestions: attempt.totalQuestions,
+        questions: (questionsByAttempt.get(attempt.id) ?? []).map((question) => ({ ...question })),
+        answers: (answersByAttempt.get(attempt.id) ?? []).map((answer) => ({
+          ...answer,
+          answeredAt: new Date(answer.answeredAt),
+        })),
+      })),
+      moduleProgress: this.moduleProgress
+        .filter((entry) => entry.userId === userId)
+        .map((entry) => ({
+          ...entry,
+          completedAt: entry.completedAt ? new Date(entry.completedAt) : null,
+          updatedAt: new Date(entry.updatedAt),
+        })),
+      pendingStreamRequests,
+    };
+  }
+
+  async deleteUserData(userId: string): Promise<boolean> {
+    const existing = this.users.some((entry) => entry.id === userId);
+    if (!existing) {
+      return false;
+    }
+
+    const sessionIds = new Set(
+      this.sessions.filter((entry) => entry.userId === userId).map((entry) => entry.id),
+    );
+    const attemptIds = new Set(
+      this.quizAttempts.filter((entry) => entry.userId === userId).map((entry) => entry.id),
+    );
+
+    this.users = this.users.filter((entry) => entry.id !== userId);
+    this.sessions = this.sessions.filter((entry) => entry.userId !== userId);
+    this.messages = this.messages.filter((entry) => !sessionIds.has(entry.sessionId));
+    this.quizAttempts = this.quizAttempts.filter((entry) => entry.userId !== userId);
+    this.quizQuestions = this.quizQuestions.filter((entry) => !attemptIds.has(entry.attemptId));
+    this.quizAnswers = this.quizAnswers.filter((entry) => !attemptIds.has(entry.attemptId));
+    this.moduleProgress = this.moduleProgress.filter((entry) => entry.userId !== userId);
+
+    for (const [streamId, entry] of this.pendingStreamRequests.entries()) {
+      if (entry.userId === userId) {
+        this.pendingStreamRequests.delete(streamId);
+      }
+    }
+
+    return true;
+  }
+
+  async purgeRetainedData(input: {
+    cutoff: Date;
+    userId?: string;
+    now?: Date;
+  }): Promise<DataRetentionPurgeResult> {
+    const cutoffMs = input.cutoff.getTime();
+    const nowMs = (input.now ?? new Date()).getTime();
+    const shouldIncludeUser = (ownerId: string): boolean => !input.userId || ownerId === input.userId;
+
+    const staleSessionIds = new Set(
+      this.sessions
+        .filter((entry) => shouldIncludeUser(entry.userId) && entry.lastActiveAt.getTime() <= cutoffMs)
+        .map((entry) => entry.id),
+    );
+    const sessionsDeleted = staleSessionIds.size;
+    const messagesDeleted = this.messages.filter((entry) => staleSessionIds.has(entry.sessionId)).length;
+
+    this.sessions = this.sessions.filter((entry) => !staleSessionIds.has(entry.id));
+    this.messages = this.messages.filter((entry) => !staleSessionIds.has(entry.sessionId));
+
+    const staleAttemptIds = new Set(
+      this.quizAttempts
+        .filter((entry) => shouldIncludeUser(entry.userId) && entry.startedAt.getTime() <= cutoffMs)
+        .map((entry) => entry.id),
+    );
+    const quizAttemptsDeleted = staleAttemptIds.size;
+    const quizQuestionsDeleted = this.quizQuestions.filter((entry) =>
+      staleAttemptIds.has(entry.attemptId),
+    ).length;
+    const quizAnswersDeleted = this.quizAnswers.filter((entry) =>
+      staleAttemptIds.has(entry.attemptId),
+    ).length;
+
+    this.quizAttempts = this.quizAttempts.filter((entry) => !staleAttemptIds.has(entry.id));
+    this.quizQuestions = this.quizQuestions.filter((entry) => !staleAttemptIds.has(entry.attemptId));
+    this.quizAnswers = this.quizAnswers.filter((entry) => !staleAttemptIds.has(entry.attemptId));
+
+    let pendingStreamRequestsDeleted = 0;
+    for (const [streamId, entry] of this.pendingStreamRequests.entries()) {
+      if (!shouldIncludeUser(entry.userId)) {
+        continue;
+      }
+
+      if (entry.expiresAt.getTime() <= nowMs || entry.createdAt.getTime() <= cutoffMs) {
+        this.pendingStreamRequests.delete(streamId);
+        pendingStreamRequestsDeleted += 1;
+      }
+    }
+
+    return {
+      sessionsDeleted,
+      messagesDeleted,
+      quizAttemptsDeleted,
+      quizQuestionsDeleted,
+      quizAnswersDeleted,
+      pendingStreamRequestsDeleted,
     };
   }
 }

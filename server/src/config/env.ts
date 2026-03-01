@@ -47,6 +47,7 @@ const envSchema = z.object({
   VECTOR_CIRCUIT_FAILURE_THRESHOLD: z.coerce.number().default(5),
   VECTOR_CIRCUIT_OPEN_MS: z.coerce.number().default(30000),
   STREAM_REQUEST_TTL_SECONDS: z.coerce.number().default(120),
+  DATA_RETENTION_DAYS: z.coerce.number().default(180),
   SHUTDOWN_TIMEOUT_MS: z.coerce.number().default(15000),
   COOKIE_SECURE: z.enum(['true', 'false']).optional(),
 });
@@ -158,6 +159,7 @@ export const env = {
   loginMaxAttempts: Math.max(1, Math.floor(parsedData.LOGIN_MAX_ATTEMPTS)),
   loginLockoutMinutes: Math.max(1, Math.floor(parsedData.LOGIN_LOCKOUT_MINUTES)),
   streamRequestTtlSeconds: Math.max(10, Math.floor(parsedData.STREAM_REQUEST_TTL_SECONDS)),
+  dataRetentionDays: Math.max(1, Math.floor(parsedData.DATA_RETENTION_DAYS)),
   embeddingProvider: resolvedEmbeddingProvider,
   openaiEmbeddingModel: parsedData.OPENAI_EMBEDDING_MODEL,
   embeddingBatchSize: Math.max(1, Math.floor(parsedData.EMBEDDING_BATCH_SIZE)),

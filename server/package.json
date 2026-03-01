@@ -11,6 +11,7 @@
     "db:push:dev": "drizzle-kit push",
     "migrate": "tsx scripts/migrate.ts",
     "migrate:status": "tsx scripts/migrate.ts --status",
+    "retention": "tsx scripts/retention.ts",
     "lint": "eslint \"src/**/*.ts\" \"tests/**/*.ts\"",
     "test": "jest --runInBand"
   },

@@ -1,4 +1,4 @@
-import { and, eq, gt, lte, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, inArray, lte, or, sql } from 'drizzle-orm';
 import { getDb } from '../db/index.js';
 import {
   messages,
@@ -21,7 +21,12 @@ import type {
   TrainingSession,
   User,
 } from '../domain/types.js';
-import type { DataStore, PendingStreamRequest } from './types.js';
+import type {
+  DataRetentionPurgeResult,
+  DataStore,
+  PendingStreamRequest,
+  PrivacyDataExport,
+} from './types.js';
 
 const toSkillLevel = (value: string): SkillLevel => {
   if (value === 'advanced' || value === 'intermediate' || value === 'beginner') {
@@ -460,6 +465,248 @@ export class PostgresStore implements DataStore {
       moduleBreakdown,
       recentQuizScores,
     };
+  }
+
+  async exportUserData(userId: string): Promise<PrivacyDataExport | null> {
+    const db = assertDb();
+
+    const [user] = await db
+      .select({
+        id: users.id,
+        email: users.email,
+        language: users.language,
+        skillLevel: users.skillLevel,
+        createdAt: users.createdAt,
+        lastLoginAt: users.lastLoginAt,
+      })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+
+    if (!user) {
+      return null;
+    }
+
+    const sessionRows = await db
+      .select()
+      .from(sessions)
+      .where(eq(sessions.userId, userId))
+      .orderBy(asc(sessions.startedAt));
+    const sessionIds = sessionRows.map((entry) => entry.id);
+    const messageRows =
+      sessionIds.length === 0
+        ? []
+        : await db
+            .select()
+            .from(messages)
+            .where(inArray(messages.sessionId, sessionIds))
+            .orderBy(asc(messages.createdAt));
+
+    const messagesBySession = new Map<string, ChatMessage[]>();
+    for (const message of messageRows) {
+      const list = messagesBySession.get(message.sessionId);
+      const typedMessage: ChatMessage = {
+        ...message,
+        role: message.role as ChatMessage['role'],
+      };
+      if (list) {
+        list.push(typedMessage);
+      } else {
+        messagesBySession.set(message.sessionId, [typedMessage]);
+      }
+    }
+
+    const attemptRows = await db
+      .select()
+      .from(quizAttempts)
+      .where(eq(quizAttempts.userId, userId))
+      .orderBy(asc(quizAttempts.startedAt));
+    const attemptIds = attemptRows.map((entry) => entry.id);
+
+    const questionRows =
+      attemptIds.length === 0
+        ? []
+        : await db
+            .select()
+            .from(quizQuestions)
+            .where(inArray(quizQuestions.attemptId, attemptIds))
+            .orderBy(asc(quizQuestions.attemptId), asc(quizQuestions.position));
+
+    const questionsByAttempt = new Map<string, QuizQuestion[]>();
+    for (const question of questionRows) {
+      const list = questionsByAttempt.get(question.attemptId);
+      const typedQuestion: QuizQuestion = {
+        ...question,
+        type: question.type as QuizQuestion['type'],
+      };
+      if (list) {
+        list.push(typedQuestion);
+      } else {
+        questionsByAttempt.set(question.attemptId, [typedQuestion]);
+      }
+    }
+
+    const answerRows =
+      attemptIds.length === 0
+        ? []
+        : await db
+            .select()
+            .from(quizAnswers)
+            .where(inArray(quizAnswers.attemptId, attemptIds))
+            .orderBy(asc(quizAnswers.attemptId), asc(quizAnswers.answeredAt));
+
+    const answersByAttempt = new Map<string, QuizAnswer[]>();
+    for (const answer of answerRows) {
+      const list = answersByAttempt.get(answer.attemptId);
+      if (list) {
+        list.push(answer);
+      } else {
+        answersByAttempt.set(answer.attemptId, [answer]);
+      }
+    }
+
+    const progressRows = await db
+      .select()
+      .from(moduleProgress)
+      .where(eq(moduleProgress.userId, userId))
+      .orderBy(asc(moduleProgress.module));
+
+    const pendingRows = await db
+      .select()
+      .from(pendingStreamRequests)
+      .where(eq(pendingStreamRequests.userId, userId))
+      .orderBy(asc(pendingStreamRequests.createdAt));
+
+    return {
+      generatedAt: new Date(),
+      user: {
+        id: user.id,
+        email: user.email,
+        language: user.language,
+        skillLevel: toSkillLevel(user.skillLevel),
+        createdAt: user.createdAt,
+        lastLoginAt: user.lastLoginAt,
+      },
+      sessions: sessionRows.map((session) => ({
+        id: session.id,
+        module: session.module,
+        startedAt: session.startedAt,
+        lastActiveAt: session.lastActiveAt,
+        messages: messagesBySession.get(session.id) ?? [],
+      })),
+      quizAttempts: attemptRows.map((attempt) => ({
+        id: attempt.id,
+        module: attempt.module,
+        startedAt: attempt.startedAt,
+        completedAt: attempt.completedAt,
+        score: attempt.score,
+        totalQuestions: attempt.totalQuestions,
+        questions: questionsByAttempt.get(attempt.id) ?? [],
+        answers: answersByAttempt.get(attempt.id) ?? [],
+      })),
+      moduleProgress: progressRows,
+      pendingStreamRequests: pendingRows.map((row) => ({
+        id: row.id,
+        sessionId: row.sessionId ?? undefined,
+        message: row.message,
+        module: row.module ?? undefined,
+        topK: row.topK ?? undefined,
+        timeSeconds: row.timeSeconds ?? undefined,
+        expiresAt: row.expiresAt,
+        createdAt: row.createdAt,
+      })),
+    };
+  }
+
+  async deleteUserData(userId: string): Promise<boolean> {
+    const db = assertDb();
+    const [deleted] = await db
+      .delete(users)
+      .where(eq(users.id, userId))
+      .returning({ id: users.id });
+    return Boolean(deleted);
+  }
+
+  async purgeRetainedData(input: {
+    cutoff: Date;
+    userId?: string;
+    now?: Date;
+  }): Promise<DataRetentionPurgeResult> {
+    const db = assertDb();
+    const now = input.now ?? new Date();
+
+    return db.transaction(async (tx) => {
+      const staleSessions = await tx
+        .select({ id: sessions.id })
+        .from(sessions)
+        .where(
+          input.userId
+            ? and(eq(sessions.userId, input.userId), lte(sessions.lastActiveAt, input.cutoff))
+            : lte(sessions.lastActiveAt, input.cutoff),
+        );
+      const staleSessionIds = staleSessions.map((entry) => entry.id);
+
+      let messagesDeleted = 0;
+      if (staleSessionIds.length > 0) {
+        const [messageCount] = await tx
+          .select({ count: sql<number>`count(*)` })
+          .from(messages)
+          .where(inArray(messages.sessionId, staleSessionIds));
+        messagesDeleted = Number(messageCount?.count ?? 0);
+
+        await tx.delete(sessions).where(inArray(sessions.id, staleSessionIds));
+      }
+
+      const staleAttempts = await tx
+        .select({ id: quizAttempts.id })
+        .from(quizAttempts)
+        .where(
+          input.userId
+            ? and(eq(quizAttempts.userId, input.userId), lte(quizAttempts.startedAt, input.cutoff))
+            : lte(quizAttempts.startedAt, input.cutoff),
+        );
+      const staleAttemptIds = staleAttempts.map((entry) => entry.id);
+
+      let quizQuestionsDeleted = 0;
+      let quizAnswersDeleted = 0;
+      if (staleAttemptIds.length > 0) {
+        const [questionCount] = await tx
+          .select({ count: sql<number>`count(*)` })
+          .from(quizQuestions)
+          .where(inArray(quizQuestions.attemptId, staleAttemptIds));
+        quizQuestionsDeleted = Number(questionCount?.count ?? 0);
+
+        const [answerCount] = await tx
+          .select({ count: sql<number>`count(*)` })
+          .from(quizAnswers)
+          .where(inArray(quizAnswers.attemptId, staleAttemptIds));
+        quizAnswersDeleted = Number(answerCount?.count ?? 0);
+
+        await tx.delete(quizAttempts).where(inArray(quizAttempts.id, staleAttemptIds));
+      }
+
+      const pendingLifetimeFilter = or(
+        lte(pendingStreamRequests.expiresAt, now),
+        lte(pendingStreamRequests.createdAt, input.cutoff),
+      );
+      const pendingDeleted = await tx
+        .delete(pendingStreamRequests)
+        .where(
+          input.userId
+            ? and(eq(pendingStreamRequests.userId, input.userId), pendingLifetimeFilter)
+            : pendingLifetimeFilter,
+        )
+        .returning({ id: pendingStreamRequests.id });
+
+      return {
+        sessionsDeleted: staleSessionIds.length,
+        messagesDeleted,
+        quizAttemptsDeleted: staleAttemptIds.length,
+        quizQuestionsDeleted,
+        quizAnswersDeleted,
+        pendingStreamRequestsDeleted: pendingDeleted.length,
+      };
+    });
   }
 }
 

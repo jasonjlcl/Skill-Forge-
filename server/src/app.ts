@@ -12,6 +12,7 @@ import { requestLogger } from './middleware/logging.js';
 import { createAuthRouter } from './routes/auth.js';
 import { createChatRouter } from './routes/chat.js';
 import { createMeRouter } from './routes/me.js';
+import { createPrivacyRouter } from './routes/privacy.js';
 import { createQuizRouter } from './routes/quiz.js';
 import { getHealthSnapshot } from './services/health.js';
 import { getLlmClient, type LlmClient } from './services/gemini.js';
@@ -133,16 +134,19 @@ export const createApp = (overrides: AppOverrides = {}) => {
   const chatRouter = createChatRouter(deps);
   const quizRouter = createQuizRouter(deps);
   const meRouter = createMeRouter(deps);
+  const privacyRouter = createPrivacyRouter(deps);
 
   app.use('/auth', authRouter);
   app.use('/chat', chatRouter);
   app.use('/quiz', quizRouter);
   app.use('/me', meRouter);
+  app.use('/privacy', privacyRouter);
 
   app.use('/api/auth', authRouter);
   app.use('/api/chat', chatRouter);
   app.use('/api/quiz', quizRouter);
   app.use('/api/me', meRouter);
+  app.use('/api/privacy', privacyRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

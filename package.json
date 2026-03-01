@@ -15,6 +15,7 @@
     "audit:client": "npm --prefix client audit --omit=dev --audit-level=high",
     "audit": "npm run audit:server && npm run audit:client",
     "migrate": "npm --prefix server run migrate",
+    "retention": "npm --prefix server run retention",
     "docker:prod:up": "docker compose --env-file .env.production -f docker-compose.prod.yml up -d --build",
     "docker:prod:up:tls": "docker compose --env-file .env.production -f docker-compose.prod.yml -f docker-compose.https.yml --profile tls up -d --build",
     "docker:prod:up:https": "docker compose --env-file .env.production -f docker-compose.prod.yml -f docker-compose.https.yml up -d --build",

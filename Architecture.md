@@ -89,6 +89,12 @@ sequenceDiagram
 - SSE `meta` includes context source metadata plus trust/risk tags.
 - SSE `done` includes moderated answer + moderation decision metadata.
 
+## Current API Shape (Privacy)
+
+- `GET /api/privacy/export`
+- `POST /api/privacy/retention/run`
+- `DELETE /api/privacy`
+
 ## Database Hot-Path Indexes
 
 - `messages(session_id, created_at)`

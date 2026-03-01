@@ -115,7 +115,7 @@ Implemented quality and safety gates:
   - retrieval top-1 accuracy checks
   - prompt-injection sanitization checks
   - moderation policy checks
-- CI runs `rag-eval` in non-blocking mode initially (`continue-on-error: true`)
+- CI runs `rag-eval` as a blocking gate with baseline policy thresholds
 
 Current chat safety behavior:
 - `meta` SSE event includes source trust/risk tags for retrieved context
@@ -192,6 +192,7 @@ Important variables:
 - `LLM_CIRCUIT_FAILURE_THRESHOLD`, `LLM_CIRCUIT_OPEN_MS`
 - `VECTOR_RETRY_MAX_ATTEMPTS`, `VECTOR_RETRY_BASE_DELAY_MS`, `VECTOR_RETRY_MAX_DELAY_MS`
 - `VECTOR_CIRCUIT_FAILURE_THRESHOLD`, `VECTOR_CIRCUIT_OPEN_MS`
+- `DATA_RETENTION_DAYS`
 
 ## API Routes
 
@@ -208,10 +209,13 @@ Primary routes:
 - `POST /quiz/start` (CSRF)
 - `POST /quiz/answer` (CSRF)
 - `GET /me/analytics`
+- `GET /privacy/export`
+- `POST /privacy/retention/run` (CSRF)
+- `DELETE /privacy` (CSRF)
 - `GET /health`
 - `GET /api/health` (dependency-aware health snapshot)
 
-All auth/chat/quiz/me routes are also mounted under `/api/*`.
+All auth/chat/quiz/me/privacy routes are also mounted under `/api/*`.
 
 ## Scripts
 
@@ -224,6 +228,7 @@ All auth/chat/quiz/me routes are also mounted under `/api/*`.
 - `npm run ingest` ingest training docs
 - `npm run eval:rag` run RAG eval script
 - `npm run eval:rag:ci` CI wrapper for the RAG eval baseline
+- `npm run retention` run retention purge workflow
 
 Docker/VPS:
 - `npm run docker:prod:up`

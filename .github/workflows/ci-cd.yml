@@ -130,7 +130,6 @@ jobs:
   rag-eval:
     runs-on: ubuntu-latest
     needs: quality
-    continue-on-error: true
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -149,7 +148,12 @@ jobs:
       - name: Install root dependencies
         run: npm ci
 
-      - name: Run RAG baseline eval (non-blocking)
+      - name: Run RAG baseline eval (blocking)
+        env:
+          RAG_EVAL_MIN_TOP1: '0.75'
+          RAG_EVAL_MIN_CASES: '4'
+          RAG_EVAL_REQUIRE_INJECTION_SANITIZATION: 'true'
+          RAG_EVAL_REQUIRE_OUTPUT_MODERATION: 'true'
         run: npm run eval:rag:ci
 
   docker-build:
@@ -159,6 +163,7 @@ jobs:
       - sast
       - quality
       - container-scan
+      - rag-eval
     permissions:
       contents: read
       packages: write

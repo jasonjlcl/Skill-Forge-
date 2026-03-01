@@ -18,6 +18,58 @@ export interface PendingStreamRequest {
   timeSeconds?: number;
 }
 
+export interface PrivacyExportUser {
+  id: string;
+  email: string;
+  language: string;
+  skillLevel: SkillLevel;
+  createdAt: Date;
+  lastLoginAt: Date | null;
+}
+
+export interface PrivacyExportSession {
+  id: string;
+  module: string;
+  startedAt: Date;
+  lastActiveAt: Date;
+  messages: ChatMessage[];
+}
+
+export interface PrivacyExportQuizAttempt {
+  id: string;
+  module: string;
+  startedAt: Date;
+  completedAt: Date | null;
+  score: number | null;
+  totalQuestions: number;
+  questions: QuizQuestion[];
+  answers: QuizAnswer[];
+}
+
+export interface PrivacyExportPendingStreamRequest extends PendingStreamRequest {
+  id: string;
+  expiresAt: Date;
+  createdAt: Date;
+}
+
+export interface PrivacyDataExport {
+  generatedAt: Date;
+  user: PrivacyExportUser;
+  sessions: PrivacyExportSession[];
+  quizAttempts: PrivacyExportQuizAttempt[];
+  moduleProgress: ModuleProgress[];
+  pendingStreamRequests: PrivacyExportPendingStreamRequest[];
+}
+
+export interface DataRetentionPurgeResult {
+  sessionsDeleted: number;
+  messagesDeleted: number;
+  quizAttemptsDeleted: number;
+  quizQuestionsDeleted: number;
+  quizAnswersDeleted: number;
+  pendingStreamRequestsDeleted: number;
+}
+
 export interface DataStore {
   createUser(input: {
     email: string;
@@ -103,4 +155,11 @@ export interface DataStore {
   listModuleProgress(userId: string): Promise<ModuleProgress[]>;
 
   getAnalytics(userId: string): Promise<AnalyticsSnapshot>;
+  exportUserData(userId: string): Promise<PrivacyDataExport | null>;
+  deleteUserData(userId: string): Promise<boolean>;
+  purgeRetainedData(input: {
+    cutoff: Date;
+    userId?: string;
+    now?: Date;
+  }): Promise<DataRetentionPurgeResult>;
 }
