@@ -242,23 +242,32 @@ Recommended fix:
 ## Performance & Cost Control
 
 ### F-PERF-01 - No explicit output token caps in model requests
-Severity: High
-Evidence:
-- OpenAI call has `model`, `temperature`, `messages` only (`server/src/services/gemini.ts:96`), no max token budget.
-Impact:
+Severity (baseline): High
+Status (2026-03-01): Resolved
+Baseline evidence:
+- OpenAI call previously lacked explicit max output token budget controls.
+Current evidence:
+- Runtime config now defines `LLM_MAX_OUTPUT_TOKENS` and normalized `llmMaxOutputTokens` in `server/src/config/env.ts`.
+- Gemini request sets `generationConfig.maxOutputTokens` in `server/src/services/gemini.ts`.
+- OpenAI request sets `max_tokens` in `server/src/services/gemini.ts`.
+Historical impact:
 - Cost variance and latency spikes under large prompts.
-Recommended fix:
-- Add configurable output caps (`LLM_MAX_OUTPUT_TOKENS`) and request budget enforcement.
+Resolution:
+- Added configurable output caps (`LLM_MAX_OUTPUT_TOKENS`) with request-level enforcement across provider calls.
 
 ### F-PERF-02 - Configured RAG context limits are not enforced
-Severity: Medium
-Evidence:
-- Config fields exist: `server/src/config/env.ts:31`, `server/src/config/env.ts:109`
-- Prompt builder concatenates full chunk text without trim: `server/src/services/gemini.ts:19`, `server/src/services/gemini.ts:124`
-Impact:
+Severity (baseline): Medium
+Status (2026-03-01): Resolved
+Baseline evidence:
+- `ragMaxContextChars` config existed, but prompt assembly previously did not enforce a deterministic context-size budget.
+Current evidence:
+- `ragMaxContextChars` is parsed and normalized in `server/src/config/env.ts`.
+- Context assembly now uses `toContextText(...)` with budget application in `server/src/services/gemini.ts`.
+- Retrieval/prompt context trimming is enforced through `applyContextBudget(...)` in `server/src/services/vectorStore.ts`.
+Historical impact:
 - Larger prompt payloads, cost increases, and inconsistent quality.
-Recommended fix:
-- Enforce `ragMaxContextChars` during context assembly and truncate by score order.
+Resolution:
+- Enforced `ragMaxContextChars` during context assembly and truncation by retrieval order/score.
 
 ### F-PERF-03 - Embedding implementation is lexical hash vector, not semantic
 Severity (baseline): Medium
@@ -274,14 +283,17 @@ Resolution:
 - Integrated semantic embedding provider with configurable model and batch size, and retained hash fallback for non-production safety.
 
 ### F-PERF-04 - DB indexing gaps for chat message retrieval paths
-Severity: Medium
-Evidence:
-- `listMessages` queries by `sessionId` ordered by `createdAt` (`server/src/store/postgresStore.ts:163-169`)
-- `messages` table has no explicit index on `(session_id, created_at)` (`server/src/db/schema.ts:35`)
-Impact:
-- Query degradation at scale.
-Recommended fix:
-- Add composite index(es) for hot paths (`messages(session_id, created_at)`, similar for attempts/answers).
+Severity (baseline): Medium
+Status (2026-03-01): Resolved
+Baseline evidence:
+- `listMessages` query pattern (`sessionId` + `createdAt`) lacked explicit composite indexing guarantees in baseline schema.
+Current evidence:
+- Composite index for messages exists in schema (`messages_session_created_at_idx`) in `server/src/db/schema.ts`.
+- Versioned migration `server/drizzle/0001_hot_path_indexes.sql` tracks hot-path index creation for messages, attempts, questions, and answers.
+Historical impact:
+- Query degradation risk at scale.
+Resolution:
+- Added and tracked composite indexes for chat/quiz hot paths (`messages(session_id, created_at)` and related attempt/answer indexes).
 
 ## AI Quality & Safety
 
