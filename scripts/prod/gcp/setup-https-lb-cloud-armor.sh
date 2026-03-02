@@ -14,6 +14,7 @@ RETENTION_JOB_EDGE_HEADER_NAME="${RETENTION_JOB_EDGE_HEADER_NAME:-X-Skillforge-I
 RETENTION_JOB_EDGE_HEADER_VALUE="${RETENTION_JOB_EDGE_HEADER_VALUE:-retention}"
 RETENTION_JOB_EDGE_SHARED_KEY_HEADER_NAME="${RETENTION_JOB_EDGE_SHARED_KEY_HEADER_NAME:-X-Skillforge-Edge-Key}"
 RETENTION_JOB_EDGE_SHARED_KEY="${RETENTION_JOB_EDGE_SHARED_KEY:-}"
+WAF_MODE="${WAF_MODE:-enforce}"
 
 PROJECT_ID="$(gcloud config get-value project)"
 NETWORK_NAME="default"
@@ -38,6 +39,20 @@ if [[ "$RETENTION_JOB_EDGE_SHARED_KEY_HEADER_NAME" == *"'"* || "$RETENTION_JOB_E
   echo "[lb] RETENTION_JOB_EDGE_SHARED_KEY_HEADER_NAME/RETENTION_JOB_EDGE_SHARED_KEY cannot contain single quotes."
   exit 1
 fi
+
+WAF_MODE="${WAF_MODE,,}"
+case "$WAF_MODE" in
+  enforce)
+    WAF_PREVIEW="false"
+    ;;
+  preview)
+    WAF_PREVIEW="true"
+    ;;
+  *)
+    echo "[lb] WAF_MODE must be either 'enforce' or 'preview'."
+    exit 1
+    ;;
+esac
 
 echo "[lb] Enabling required APIs..."
 gcloud services enable compute.googleapis.com certificatemanager.googleapis.com --project "$PROJECT_ID" >/dev/null
@@ -158,6 +173,12 @@ upsert_rule() {
   local action="$2"
   local expression="$3"
   local description="$4"
+  local preview="${5:-false}"
+  local preview_flag="--no-preview"
+
+  if [[ "$preview" == "true" ]]; then
+    preview_flag="--preview"
+  fi
 
   if gcloud compute security-policies rules describe "$priority" --project "$PROJECT_ID" --security-policy "$SECURITY_POLICY" >/dev/null 2>&1; then
     gcloud compute security-policies rules update "$priority" \
@@ -165,14 +186,16 @@ upsert_rule() {
       --security-policy "$SECURITY_POLICY" \
       --action "$action" \
       --expression "$expression" \
-      --description "$description" >/dev/null
+      --description "$description" \
+      "$preview_flag" >/dev/null
   else
     gcloud compute security-policies rules create "$priority" \
       --project "$PROJECT_ID" \
       --security-policy "$SECURITY_POLICY" \
       --action "$action" \
       --expression "$expression" \
-      --description "$description" >/dev/null
+      --description "$description" \
+      "$preview_flag" >/dev/null
   fi
 }
 
@@ -180,23 +203,9 @@ echo "[lb] Upserting precise retention endpoint edge rules..."
 upsert_rule "$RETENTION_ALLOW_PRIORITY" "allow" "$retention_allow_expr" "Allow retention endpoint only for trusted scheduler pattern"
 upsert_rule "$RETENTION_DENY_PRIORITY" "deny-403" "$retention_deny_expr" "Deny all other retention endpoint traffic"
 
-if ! gcloud compute security-policies rules describe 1000 --project "$PROJECT_ID" --security-policy "$SECURITY_POLICY" >/dev/null 2>&1; then
-  gcloud compute security-policies rules create 1000 \
-    --project "$PROJECT_ID" \
-    --security-policy "$SECURITY_POLICY" \
-    --action deny-403 \
-    --expression "evaluatePreconfiguredWaf('sqli-v33-stable')" \
-    --description "Block SQL injection signatures" >/dev/null
-fi
-
-if ! gcloud compute security-policies rules describe 1100 --project "$PROJECT_ID" --security-policy "$SECURITY_POLICY" >/dev/null 2>&1; then
-  gcloud compute security-policies rules create 1100 \
-    --project "$PROJECT_ID" \
-    --security-policy "$SECURITY_POLICY" \
-    --action deny-403 \
-    --expression "evaluatePreconfiguredWaf('xss-v33-stable')" \
-    --description "Block XSS signatures" >/dev/null
-fi
+echo "[lb] Upserting baseline WAF rules (mode=${WAF_MODE})..."
+upsert_rule 1000 "deny-403" "evaluatePreconfiguredWaf('sqli-v33-stable')" "Block SQL injection signatures" "$WAF_PREVIEW"
+upsert_rule 1100 "deny-403" "evaluatePreconfiguredWaf('xss-v33-stable')" "Block XSS signatures" "$WAF_PREVIEW"
 
 gcloud compute backend-services update "$BACKEND_SERVICE" \
   --project "$PROJECT_ID" \
@@ -257,3 +266,4 @@ if [[ -n "$RETENTION_JOB_EDGE_SHARED_KEY" ]]; then
 else
   echo "[lb] Retention shared-key header not set. Configure RETENTION_JOB_EDGE_SHARED_KEY for stricter edge filtering."
 fi
+echo "[lb] Baseline WAF mode: ${WAF_MODE}"

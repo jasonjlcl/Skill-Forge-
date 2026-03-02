@@ -2,9 +2,12 @@
 
 const inputBase = process.argv[2] || 'https://skillforge.it.com';
 const baseUrl = inputBase.replace(/\/+$/, '');
-const ts = Date.now();
-const email = `smoke+${ts}@example.com`;
 const password = 'Test1234!';
+const retryableStatuses = new Set([502, 503, 504]);
+const retryBaseMsRaw = Number.parseInt(process.env.AUTH_SMOKE_RETRY_BASE_MS ?? '250', 10);
+const retryBaseMs = Number.isFinite(retryBaseMsRaw) ? Math.max(50, retryBaseMsRaw) : 250;
+const maxAttemptsRaw = Number.parseInt(process.env.AUTH_SMOKE_MAX_ATTEMPTS ?? '4', 10);
+const maxAttempts = Number.isFinite(maxAttemptsRaw) ? Math.max(1, maxAttemptsRaw) : 4;
 
 const cookieJar = new Map();
 
@@ -67,14 +70,31 @@ const request = async (path, { method = 'GET', body, withCookie = false } = {}) 
   };
 };
 
-const assertStatus = (label, actual, expected) => {
-  if (actual !== expected) {
-    throw new Error(`${label} expected ${expected}, got ${actual}`);
+const toBodyPreview = (text) => {
+  if (!text || text.trim().length === 0) {
+    return '<empty>';
+  }
+
+  return text.replace(/\s+/g, ' ').trim().slice(0, 300);
+};
+
+const assertStatus = (label, response, expected) => {
+  if (response.status !== expected) {
+    const error = new Error(
+      `${label} expected ${expected}, got ${response.status}; body=${toBodyPreview(response.text)}`,
+    );
+    error.status = response.status;
+    error.label = label;
+    throw error;
   }
 };
 
-const run = async () => {
-  console.log(`[auth-smoke] base=${baseUrl}`);
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const runAttempt = async (attemptNumber) => {
+  cookieJar.clear();
+  const email = `smoke+${Date.now()}-${attemptNumber}@example.com`;
+  console.log(`[auth-smoke] attempt=${attemptNumber}/${maxAttempts}`);
   console.log(`[auth-smoke] email=${email}`);
 
   const register = await request('/api/auth/register', {
@@ -87,31 +107,53 @@ const run = async () => {
     },
   });
   console.log(`[auth-smoke] register status=${register.status}`);
-  assertStatus('register', register.status, 201);
+  assertStatus('register', register, 201);
 
   const login = await request('/api/auth/login', {
     method: 'POST',
     body: { email, password },
   });
   console.log(`[auth-smoke] login status=${login.status}`);
-  assertStatus('login', login.status, 200);
+  assertStatus('login', login, 200);
 
   const me = await request('/api/auth/me', { withCookie: true });
   console.log(`[auth-smoke] me status=${me.status}`);
-  assertStatus('me', me.status, 200);
+  assertStatus('me', me, 200);
 
   const badLogin = await request('/api/auth/login', {
     method: 'POST',
     body: { email, password: `${password}-wrong` },
   });
   console.log(`[auth-smoke] wrong-password status=${badLogin.status}`);
-  assertStatus('wrong-password', badLogin.status, 401);
-
-  console.log('[auth-smoke] PASS');
+  assertStatus('wrong-password', badLogin, 401);
 };
 
-run().catch((error) => {
-  console.error('[auth-smoke] FAIL', error.message);
-  process.exit(1);
-});
+const run = async () => {
+  console.log(`[auth-smoke] base=${baseUrl}`);
 
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      await runAttempt(attempt);
+      console.log('[auth-smoke] PASS');
+      return;
+    } catch (error) {
+      const status = typeof error?.status === 'number' ? error.status : null;
+      if (!status || !retryableStatuses.has(status) || attempt >= maxAttempts) {
+        throw error;
+      }
+
+      const delayMs = retryBaseMs * Math.max(1, 2 ** (attempt - 1));
+      const step = typeof error?.label === 'string' ? error.label : 'request';
+      console.log(
+        `[auth-smoke] transient ${step} status=${status}; retrying in ${delayMs}ms`,
+      );
+      await sleep(delayMs);
+    }
+  }
+};
+
+run()
+  .catch((error) => {
+    console.error('[auth-smoke] FAIL', error.message);
+    process.exit(1);
+  });
