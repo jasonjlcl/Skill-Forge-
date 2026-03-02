@@ -73,7 +73,7 @@ sequenceDiagram
 flowchart LR
   U[Users] --> DNS[skillforge.it.com DNS]
   DNS --> LB[GCP External HTTPS LB]
-  LB --> ARMOR[Cloud Armor Policy (WAF SQLi/XSS in preview mode)]
+  LB --> ARMOR[Cloud Armor Policy - WAF SQLi and XSS preview mode]
   ARMOR --> WEB[NGINX Web Container]
   WEB --> API[Express API Container]
   API --> PG[(PostgreSQL)]
