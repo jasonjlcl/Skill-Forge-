@@ -220,11 +220,20 @@ export const createChatRouter = (deps: AppDeps): Router => {
       res.setHeader('X-Accel-Buffering', 'no');
       res.flushHeaders?.();
       registerSseConnection(res);
-
       let closed = false;
       let streamCompleted = false;
+      const heartbeatInterval = setInterval(() => {
+        if (closed || res.writableEnded) {
+          clearInterval(heartbeatInterval);
+          return;
+        }
+        // Send periodic comments to keep intermediate proxies from closing idle SSE streams.
+        res.write(': keep-alive\n\n');
+      }, 15_000);
+
       res.on('close', () => {
         closed = true;
+        clearInterval(heartbeatInterval);
         if (!streamCompleted) {
           recordStreamAborted({
             route: '/chat/stream',
@@ -327,6 +336,7 @@ export const createChatRouter = (deps: AppDeps): Router => {
         },
       });
       streamCompleted = true;
+      clearInterval(heartbeatInterval);
       recordStreamCompleted({
         route: '/chat/stream',
         module: effectiveModule,

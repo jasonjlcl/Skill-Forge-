@@ -15,6 +15,7 @@ RETENTION_JOB_EDGE_HEADER_VALUE="${RETENTION_JOB_EDGE_HEADER_VALUE:-retention}"
 RETENTION_JOB_EDGE_SHARED_KEY_HEADER_NAME="${RETENTION_JOB_EDGE_SHARED_KEY_HEADER_NAME:-X-Skillforge-Edge-Key}"
 RETENTION_JOB_EDGE_SHARED_KEY="${RETENTION_JOB_EDGE_SHARED_KEY:-}"
 WAF_MODE="${WAF_MODE:-enforce}"
+BACKEND_TIMEOUT="${BACKEND_TIMEOUT:-300s}"
 
 PROJECT_ID="$(gcloud config get-value project)"
 NETWORK_NAME="default"
@@ -110,7 +111,7 @@ if ! gcloud compute backend-services describe "$BACKEND_SERVICE" --project "$PRO
     --global \
     --protocol HTTP \
     --health-checks "$HEALTH_CHECK" \
-    --timeout 30s >/dev/null
+    --timeout "$BACKEND_TIMEOUT" >/dev/null
 fi
 
 if ! gcloud compute backend-services get-health "$BACKEND_SERVICE" \
@@ -123,6 +124,11 @@ if ! gcloud compute backend-services get-health "$BACKEND_SERVICE" \
     --instance-group "$INSTANCE_GROUP" \
     --instance-group-zone "$ZONE" >/dev/null
 fi
+
+gcloud compute backend-services update "$BACKEND_SERVICE" \
+  --project "$PROJECT_ID" \
+  --global \
+  --timeout "$BACKEND_TIMEOUT" >/dev/null
 
 echo "[lb] Ensuring Cloud Armor policy exists..."
 if ! gcloud compute security-policies describe "$SECURITY_POLICY" --project "$PROJECT_ID" >/dev/null 2>&1; then
@@ -210,7 +216,8 @@ upsert_rule 1100 "deny-403" "evaluatePreconfiguredWaf('xss-v33-stable')" "Block 
 gcloud compute backend-services update "$BACKEND_SERVICE" \
   --project "$PROJECT_ID" \
   --global \
-  --security-policy "$SECURITY_POLICY" >/dev/null
+  --security-policy "$SECURITY_POLICY" \
+  --timeout "$BACKEND_TIMEOUT" >/dev/null
 
 echo "[lb] Ensuring URL map and HTTPS proxy..."
 if ! gcloud compute url-maps describe "$URL_MAP" --project "$PROJECT_ID" >/dev/null 2>&1; then
@@ -267,3 +274,4 @@ else
   echo "[lb] Retention shared-key header not set. Configure RETENTION_JOB_EDGE_SHARED_KEY for stricter edge filtering."
 fi
 echo "[lb] Baseline WAF mode: ${WAF_MODE}"
+echo "[lb] Backend service timeout: ${BACKEND_TIMEOUT}"

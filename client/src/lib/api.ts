@@ -129,6 +129,7 @@ export const sendMessage = async (
   const source = new EventSource(`${apiBase}/chat/stream?${params.toString()}`, {
     withCredentials: true,
   });
+  let isSettled = false;
 
   source.addEventListener('meta', (event) => {
     const payload = JSON.parse((event as MessageEvent<string>).data) as ChatMetaEvent;
@@ -147,12 +148,22 @@ export const sendMessage = async (
   });
 
   source.addEventListener('done', (event) => {
+    if (isSettled) {
+      return;
+    }
+    isSettled = true;
     const payload = JSON.parse((event as MessageEvent<string>).data) as ChatDoneEvent;
     handlers.onDone?.(payload);
+    source.close();
   });
 
   source.onerror = (event) => {
+    if (isSettled || source.readyState === EventSource.CLOSED) {
+      return;
+    }
+    isSettled = true;
     handlers.onError?.(event);
+    source.close();
   };
 
   return source;
