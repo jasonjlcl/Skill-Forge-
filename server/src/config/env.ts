@@ -131,12 +131,6 @@ if (parsedData.NODE_ENV === 'production' && !parsedData.CHROMA_URL) {
   throw new Error('CHROMA_URL is required in production');
 }
 
-if (parsedData.NODE_ENV === 'production' && resolvedEmbeddingProvider !== 'openai') {
-  throw new Error(
-    'Semantic embeddings are required in production. Configure OPENAI_API_KEY or set EMBEDDING_PROVIDER=openai.',
-  );
-}
-
 export const env = {
   ...parsedData,
   DATABASE_URL: builtDatabaseUrl,

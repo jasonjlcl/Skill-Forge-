@@ -192,10 +192,10 @@ Use:
 Important variables:
 - `JWT_SECRET` (production requires strong secret, minimum 32 chars)
 - `CORS_ORIGIN`, `CLIENT_URL`
-- `GEMINI_API_KEY` and/or `OPENAI_API_KEY` (OpenAI key required in production for semantic embeddings)
+- `GEMINI_API_KEY` and/or `OPENAI_API_KEY` (OpenAI key is recommended for semantic embeddings quality)
 - `DATABASE_URL` (required in production)
 - `CHROMA_URL` (required in production)
-- `EMBEDDING_PROVIDER` (`openai` in production, `auto`/`hash` for local/test)
+- `EMBEDDING_PROVIDER` (`auto` recommended; uses OpenAI when key is present, otherwise hash fallback)
 - `OPENAI_EMBEDDING_MODEL` (default `text-embedding-3-small`)
 - `EMBEDDING_BATCH_SIZE`
 - `RAG_MAX_CONTEXT_CHARS`

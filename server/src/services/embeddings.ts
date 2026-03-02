@@ -5,6 +5,25 @@ const HASH_VECTOR_SIZE = 256;
 const MAX_EMBED_TEXT_CHARS = 8000;
 const embeddingCache = new Map<string, number[]>();
 const openaiClient = env.OPENAI_API_KEY ? new OpenAI({ apiKey: env.OPENAI_API_KEY }) : null;
+let embeddingFallbackWarningEmitted = false;
+
+const logEmbeddingFallbackWarning = (reason: string): void => {
+  if (embeddingFallbackWarningEmitted) {
+    return;
+  }
+
+  embeddingFallbackWarningEmitted = true;
+  console.warn(
+    JSON.stringify({
+      level: 'warn',
+      message: 'embedding_provider_fallback',
+      timestamp: new Date().toISOString(),
+      configuredProvider: env.embeddingProvider,
+      activeProvider: 'hash',
+      reason,
+    }),
+  );
+};
 
 const hashToken = (token: string): number => {
   let hash = 0;
@@ -51,23 +70,16 @@ const sanitizeInput = (text: string): string => {
   return compact.length <= MAX_EMBED_TEXT_CHARS ? compact : compact.slice(0, MAX_EMBED_TEXT_CHARS);
 };
 
-const ensureOpenAiAvailable = (): void => {
-  if (openaiClient) {
-    return;
-  }
-
-  if (env.embeddingProvider === 'openai' && env.NODE_ENV === 'production') {
-    throw new Error('OPENAI_API_KEY is required for semantic embeddings in production.');
-  }
-};
+const canUseOpenAi = (): boolean => Boolean(openaiClient);
 
 const embedBatchWithOpenAi = async (input: string[]): Promise<number[][]> => {
-  ensureOpenAiAvailable();
-  if (!openaiClient) {
+  const client = openaiClient;
+  if (!client || !canUseOpenAi()) {
+    logEmbeddingFallbackWarning('OPENAI_API_KEY is not configured');
     return input.map((text) => hashEmbedText(text));
   }
 
-  const response = await openaiClient.embeddings.create({
+  const response = await client.embeddings.create({
     model: env.openaiEmbeddingModel,
     input,
   });
@@ -84,11 +96,9 @@ const embedWithConfiguredProvider = async (input: string[]): Promise<number[][]>
   try {
     return await embedBatchWithOpenAi(input);
   } catch (error) {
-    if (env.NODE_ENV === 'production') {
-      throw new Error(
-        `Semantic embedding request failed: ${error instanceof Error ? error.message : 'Unknown embedding error'}`,
-      );
-    }
+    logEmbeddingFallbackWarning(
+      `Semantic embedding request failed: ${error instanceof Error ? error.message : 'Unknown embedding error'}`,
+    );
     return input.map((text) => hashEmbedText(text));
   }
 };
