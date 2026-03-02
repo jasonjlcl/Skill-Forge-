@@ -1,6 +1,6 @@
 # Skill Forge: GenAI-Powered Onboarding Platform
 
-Skill Forge is a GenAI onboarding/training webapp for manufacturing teams.
+Skill Forge is a production-ready GenAI onboarding platform for manufacturing teams, delivering guided personalized learning with real-time AI streaming, secure authentication, and resilient cloud operations.
 
 Core capabilities:
 - Cookie-based auth with CSRF protection and account lockout controls
@@ -130,6 +130,7 @@ Implemented CI/CD security gates and controlled promotion:
 - Container vulnerability scan via Trivy on API + web images (`HIGH,CRITICAL`)
 - Environment-scoped deploy jobs (`staging` then `production`) with approvals
 - Post-deploy smoke test (`scripts/auth-smoke.mjs`) and automated production rollback
+- Auth smoke retries transient warmup errors (`502/503/504`) with configurable backoff and max-attempt knobs
 
 ## Production Readiness Snapshot (March 2, 2026)
 
@@ -137,9 +138,10 @@ Implemented CI/CD security gates and controlled promotion:
 - Live HTTPS domain: `https://skillforge.it.com` behind a GCP global external HTTPS load balancer
 - Managed certificate: Google-managed cert active for `skillforge.it.com`
 - Scheduler automation: retention job runs on `https://skillforge.it.com/api/internal/retention/run` using Cloud Scheduler OIDC
-- Edge protection: Cloud Armor policy enabled with baseline WAF rules (SQLi/XSS) and a precise retention rule pair (strict allow + explicit deny)
+- Edge protection: Cloud Armor policy enabled with a precise retention allow/deny rule pair; baseline WAF rules are currently in log-only preview mode for SQLi (priority `1000`) and XSS (priority `1100`)
 - Monitoring baseline: Ops Agent active on VM, uptime checks, and CPU/memory/uptime alerts configured
 - Observability operationalization: setup script can now create logs-based API metrics, SLO burn alerts, and an API overview dashboard
+- CI/CD promotion status: latest successful staging -> production run was `22578711484` (March 2, 2026)
 - Remaining gaps: deeper privacy governance workflows, ongoing SLO threshold calibration with production traffic, and compliance hardening evidence/runbooks
 
 ## Stack
@@ -215,6 +217,7 @@ Important variables:
 - `RETENTION_JOB_OIDC_AUDIENCE` (recommended for Cloud Scheduler OIDC auth; should be the HTTPS endpoint URL)
 - `RETENTION_JOB_ALLOWED_SERVICE_ACCOUNTS` (comma-separated allowlist for scheduler caller identities)
 - `RETENTION_JOB_EDGE_SHARED_KEY` (optional additional shared-key header check for `/api/internal/retention/run`)
+- `AUTH_SMOKE_RETRY_BASE_MS`, `AUTH_SMOKE_RETRY_MAX_MS`, `AUTH_SMOKE_MAX_ATTEMPTS` (auth smoke retry tuning for transient warmup failures in CI deploy checks)
 
 ## API Routes
 
@@ -255,7 +258,7 @@ All auth/chat/quiz/me/privacy routes are also mounted under `/api/*`.
 - `bash scripts/prod/gcp/install-ops-agent.sh <instance> <zone>` install/configure Ops Agent on a GCE VM
 - `bash scripts/prod/gcp/setup-monitoring.sh <host> <instance> <zone> [notification-channel-ids]` create uptime, VM alerts, logs-based API request metrics, SLO-burn alerts, and an API overview dashboard
 - `bash scripts/prod/gcp/setup-retention-scheduler.sh <job-name> <service-url> [location] [schedule] [time-zone] [days] [service-account]` create/update scheduler retention job (OIDC requires `https://` target; injects edge marker header and optional shared-key header)
-- `bash scripts/prod/gcp/setup-https-lb-cloud-armor.sh <instance> <zone> <domain> [prefix] [target-tag]` provision HTTPS LB + managed cert + Cloud Armor (includes precise retention endpoint allow/deny rules)
+- `WAF_MODE=enforce|preview bash scripts/prod/gcp/setup-https-lb-cloud-armor.sh <instance> <zone> <domain> [prefix] [target-tag]` provision HTTPS LB + managed cert + Cloud Armor (includes precise retention endpoint allow/deny rules and baseline WAF mode upsert)
 
 Docker/VPS:
 - `npm run docker:prod:up`
@@ -293,6 +296,7 @@ Operational hardening helpers (optional but recommended):
 - Ops/Monitoring: install and configure Ops Agent, then create uptime + CPU/memory alert policies via `scripts/prod/gcp/install-ops-agent.sh` and `scripts/prod/gcp/setup-monitoring.sh`.
 - Scheduled retention automation: expose `/api/internal/retention/run` with OIDC audience config and create a Cloud Scheduler job using `scripts/prod/gcp/setup-retention-scheduler.sh` against the HTTPS domain URL.
 - Edge security and TLS: provision global external HTTPS LB, Google-managed certificate, and Cloud Armor baseline policy via `scripts/prod/gcp/setup-https-lb-cloud-armor.sh`.
+  - Use `WAF_MODE=preview` while tuning false positives, then return to `WAF_MODE=enforce` once rules are validated.
 Retention endpoint edge hardening knobs:
 - `RETENTION_JOB_EDGE_HEADER_NAME` / `RETENTION_JOB_EDGE_HEADER_VALUE` (scheduler marker header, defaults to `X-Skillforge-Internal-Job=retention`)
 - `RETENTION_JOB_EDGE_SHARED_KEY_HEADER_NAME` / `RETENTION_JOB_EDGE_SHARED_KEY` (optional shared-key header for stricter edge filtering)

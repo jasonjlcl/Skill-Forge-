@@ -4,7 +4,7 @@ This document is Markdown (`.md`) so GitHub can render Mermaid diagrams directly
 
 ## Overview
 
-Skill Forge is a React SPA + Express backend platform for onboarding chat, quizzes, and progress analytics.
+Skill Forge is a production-ready React SPA + Express platform for GenAI onboarding, combining personalized learning chat, quizzes, progress analytics, and secure cloud operations.
 
 ```mermaid
 flowchart LR
@@ -73,7 +73,7 @@ sequenceDiagram
 flowchart LR
   U[Users] --> DNS[skillforge.it.com DNS]
   DNS --> LB[GCP External HTTPS LB]
-  LB --> ARMOR[Cloud Armor Policy]
+  LB --> ARMOR[Cloud Armor Policy (WAF SQLi/XSS in preview mode)]
   ARMOR --> WEB[NGINX Web Container]
   WEB --> API[Express API Container]
   API --> PG[(PostgreSQL)]
@@ -99,6 +99,9 @@ flowchart LR
   - OTel span wrappers for provider and vector dependencies.
   - Metrics for `latency_ms`, request/error counts, `token_usage_total`, and `stream_completion_rate`.
   - Correlated request logs include `sessionId` and `streamId` where available.
+- CI/CD and Edge:
+  - `scripts/auth-smoke.mjs` retries transient warmup responses (`502/503/504`) with configurable backoff and max attempts.
+  - Cloud Armor baseline WAF rules are true upserts with `WAF_MODE=enforce|preview` control in `setup-https-lb-cloud-armor.sh`.
 
 ## Current API Shape (Chat)
 
@@ -138,6 +141,8 @@ Migration apply flow:
 - CI promotion uses an SSH-based remote deploy script (`scripts/prod/deploy-remote.sh`), so the host provider is interchangeable.
 - GCP Compute Engine is supported as a VM target when Docker, Docker Compose, and required ports/secrets are configured.
 - Current production edge uses GCP global HTTPS load balancing with Google-managed TLS and Cloud Armor.
+- As of March 2, 2026, Cloud Armor SQLi (`1000`) and XSS (`1100`) baseline WAF rules are intentionally set to `preview=true` while false positives are tuned.
 - Cloud Armor retention protection is a precise rule pair: strict allow (`POST` + retention path + scheduler marker header + optional shared key/CIDR allowlist) followed by explicit deny for all other retention-path traffic.
 - Retention automation is scheduled in Cloud Scheduler with OIDC authentication to the internal retention endpoint.
 - Monitoring setup script operationalizes logs-based API metrics, SLO burn-rate alerts, and an API dashboard for on-call triage.
+- Latest successful staged promotion run: GitHub Actions `22578711484` (March 2, 2026), with both staging and production deploy jobs passing.
