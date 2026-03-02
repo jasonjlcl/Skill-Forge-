@@ -66,6 +66,23 @@ sequenceDiagram
   - `middleware/logging.ts` request metrics + correlation-enriched request logs.
   - `routes/chat.ts` stream lifecycle metrics and session/stream correlation propagation.
 
+## Production Topology (GCP, March 2, 2026)
+
+```mermaid
+flowchart LR
+  U[Users] --> DNS[skillforge.it.com DNS]
+  DNS --> LB[GCP External HTTPS LB]
+  LB --> ARMOR[Cloud Armor Policy]
+  ARMOR --> WEB[NGINX Web Container]
+  WEB --> API[Express API Container]
+  API --> PG[(PostgreSQL)]
+  API --> CHROMA[(ChromaDB)]
+  SCH[Cloud Scheduler] -->|OIDC POST /api/internal/retention/run| LB
+  MON[Cloud Monitoring Uptime/Alerts] --> LB
+  OPS[Ops Agent] --> VM[Compute Engine VM]
+  VM --> WEB
+```
+
 ## Guardrails
 
 - Reliability:
@@ -95,6 +112,7 @@ sequenceDiagram
 - `POST /api/privacy/retention/run`
 - `DELETE /api/privacy`
 - `POST /api/internal/retention/run` (scheduler automation endpoint with bearer/OIDC auth)
+  - Production scheduler target uses HTTPS + OIDC (`https://skillforge.it.com/api/internal/retention/run`)
 
 ## Database Hot-Path Indexes
 
@@ -118,3 +136,5 @@ Migration apply flow:
 
 - CI promotion uses an SSH-based remote deploy script (`scripts/prod/deploy-remote.sh`), so the host provider is interchangeable.
 - GCP Compute Engine is supported as a VM target when Docker, Docker Compose, and required ports/secrets are configured.
+- Current production edge uses GCP global HTTPS load balancing with Google-managed TLS and Cloud Armor.
+- Retention automation is scheduled in Cloud Scheduler with OIDC authentication to the internal retention endpoint.

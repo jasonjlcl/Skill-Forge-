@@ -130,6 +130,16 @@ Implemented CI/CD security gates and controlled promotion:
 - Environment-scoped deploy jobs (`staging` then `production`) with approvals
 - Post-deploy smoke test (`scripts/auth-smoke.mjs`) and automated production rollback
 
+## Production Readiness Snapshot (March 2, 2026)
+
+- Readiness level: `9.3 / 10`
+- Live HTTPS domain: `https://skillforge.it.com` behind a GCP global external HTTPS load balancer
+- Managed certificate: Google-managed cert active for `skillforge.it.com`
+- Scheduler automation: retention job runs on `https://skillforge.it.com/api/internal/retention/run` using Cloud Scheduler OIDC
+- Edge protection: Cloud Armor policy enabled with baseline WAF rules (SQLi/XSS) and explicit retention endpoint allow rule
+- Monitoring baseline: Ops Agent active on VM, uptime checks, and CPU/memory/uptime alerts configured
+- Remaining gaps: deeper privacy governance workflows, provider-native streaming implementation, and compliance hardening evidence/runbooks
+
 ## Stack
 
 - Frontend: React 18 + Vite 6 + TypeScript 5 + Tailwind CSS
@@ -194,7 +204,7 @@ Important variables:
 - `VECTOR_CIRCUIT_FAILURE_THRESHOLD`, `VECTOR_CIRCUIT_OPEN_MS`
 - `DATA_RETENTION_DAYS`
 - `RETENTION_JOB_AUTH_TOKEN` (optional shared-token auth for `/api/internal/retention/run`)
-- `RETENTION_JOB_OIDC_AUDIENCE` (recommended for Cloud Scheduler OIDC auth)
+- `RETENTION_JOB_OIDC_AUDIENCE` (recommended for Cloud Scheduler OIDC auth; should be the HTTPS endpoint URL)
 - `RETENTION_JOB_ALLOWED_SERVICE_ACCOUNTS` (comma-separated allowlist for scheduler caller identities)
 
 ## API Routes
@@ -235,7 +245,7 @@ All auth/chat/quiz/me/privacy routes are also mounted under `/api/*`.
 - `npm run retention` run retention purge workflow
 - `bash scripts/prod/gcp/install-ops-agent.sh <instance> <zone>` install/configure Ops Agent on a GCE VM
 - `bash scripts/prod/gcp/setup-monitoring.sh <host> <instance> <zone> [notification-channel-ids]` create uptime + alert policies
-- `bash scripts/prod/gcp/setup-retention-scheduler.sh <job-name> <service-url> [location] [schedule] [time-zone] [days] [service-account]` create/update scheduler retention job
+- `bash scripts/prod/gcp/setup-retention-scheduler.sh <job-name> <service-url> [location] [schedule] [time-zone] [days] [service-account]` create/update scheduler retention job (OIDC requires `https://` target)
 - `bash scripts/prod/gcp/setup-https-lb-cloud-armor.sh <instance> <zone> <domain> [prefix] [target-tag]` provision HTTPS LB + managed cert + Cloud Armor
 
 Docker/VPS:
@@ -272,7 +282,7 @@ This project can be deployed to a GCP Compute Engine VM using the same workflow:
 
 Operational hardening helpers (optional but recommended):
 - Ops/Monitoring: install and configure Ops Agent, then create uptime + CPU/memory alert policies via `scripts/prod/gcp/install-ops-agent.sh` and `scripts/prod/gcp/setup-monitoring.sh`.
-- Scheduled retention automation: expose `/api/internal/retention/run` with OIDC audience config and create a Cloud Scheduler job using `scripts/prod/gcp/setup-retention-scheduler.sh`.
+- Scheduled retention automation: expose `/api/internal/retention/run` with OIDC audience config and create a Cloud Scheduler job using `scripts/prod/gcp/setup-retention-scheduler.sh` against the HTTPS domain URL.
 - Edge security and TLS: provision global external HTTPS LB, Google-managed certificate, and Cloud Armor baseline policy via `scripts/prod/gcp/setup-https-lb-cloud-armor.sh`.
 
 ### Recommended Resilience Overrides (Production)
