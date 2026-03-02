@@ -1,7 +1,7 @@
 # Production Readiness Review - AI Chatbot Webapp
 
 Date (baseline): 2026-02-28
-Last Updated: 2026-03-01
+Last Updated: 2026-03-02
 Reviewer: Staff/Principal Engineering Review (evidence-based)
 
 ## Executive Summary
@@ -10,11 +10,11 @@ Current state (2026-03-01): the app is production MVP-ready with validated stage
 Deployment model: promotion is SSH-based and host-agnostic (`scripts/prod/deploy-remote.sh`), which is compatible with Linux VM targets such as GCP Compute Engine when SSH/Docker prerequisites are met.
 
 Top 5 remaining issues to address next:
-1. **Streaming UX is replay-based, not provider-native token streaming yet**.
-2. **Compliance hardening can be strengthened** (artifact attestations/signing and stricter branch/deploy protection policy).
-3. **Observability still needs production operationalization** (exporters/dashboards/SLO alerting on top of newly added instrumentation).
-4. **Governance extensions remain** (audit trail depth, policy reporting, and automated lifecycle scheduling hardening).
-5. **RAG threshold policy should be tuned with production evidence over time**.
+1. **Compliance hardening can be strengthened** (artifact attestations/signing and stricter branch/deploy protection policy).
+2. **Observability on-call tuning is still needed** (SLO thresholds, paging policy, and error-budget calibration with live traffic).
+3. **Governance extensions remain** (audit trail depth, policy reporting, and automated lifecycle scheduling hardening).
+4. **RAG threshold policy should be tuned with production evidence over time**.
+5. **Operational evidence hygiene should keep improving** (runbooks, escalation drills, and recurring reliability reviews).
 
 Major improvements completed since baseline:
 - PR1 delivered async error boundaries, LLM output cap/context budgeting enforcement, and DB hot-path indexes.
@@ -57,7 +57,7 @@ Resolved since 2026-02-28:
 
 Still open:
 - Compliance hardening extensions (artifact attestations/signing and stricter deployment protection policy).
-- Observability operationalization in production (exporters/dashboards/SLO alerts).
+- Observability operationalization follow-through (exporters/dashboards/SLO alerts are now scriptable; on-call thresholds and paging policy still require production calibration).
 - Ongoing RAG threshold calibration and dataset expansion as coverage grows.
 
 ## Phase A - Architecture & Data Flow Discovery

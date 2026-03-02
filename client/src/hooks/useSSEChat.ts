@@ -154,7 +154,7 @@ export const useSSEChat = ({ selectedModule, onAnalyticsRefresh }: UseSSEChatOpt
                 message.id === assistantMessageId
                   ? {
                       ...message,
-                      content: message.content || payload.answer,
+                      content: payload.answer || message.content,
                       isStreaming: false,
                     }
                   : message,

@@ -8,6 +8,10 @@ SCHEDULE="${4:-15 3 * * *}"
 TIME_ZONE="${5:-Etc/UTC}"
 RETENTION_DAYS="${6:-180}"
 SERVICE_ACCOUNT_EMAIL="${7:-}"
+RETENTION_JOB_EDGE_HEADER_NAME="${RETENTION_JOB_EDGE_HEADER_NAME:-X-Skillforge-Internal-Job}"
+RETENTION_JOB_EDGE_HEADER_VALUE="${RETENTION_JOB_EDGE_HEADER_VALUE:-retention}"
+RETENTION_JOB_EDGE_SHARED_KEY_HEADER_NAME="${RETENTION_JOB_EDGE_SHARED_KEY_HEADER_NAME:-X-Skillforge-Edge-Key}"
+RETENTION_JOB_EDGE_SHARED_KEY="${RETENTION_JOB_EDGE_SHARED_KEY:-}"
 
 PROJECT_ID="$(gcloud config get-value project)"
 PROJECT_NUMBER="$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')"
@@ -37,6 +41,10 @@ gcloud iam service-accounts add-iam-policy-binding "$SERVICE_ACCOUNT_EMAIL" \
   --role="roles/iam.serviceAccountTokenCreator" >/dev/null
 
 JOB_PAYLOAD="{\"days\":${RETENTION_DAYS}}"
+REQUEST_HEADERS="Content-Type=application/json,${RETENTION_JOB_EDGE_HEADER_NAME}=${RETENTION_JOB_EDGE_HEADER_VALUE}"
+if [[ -n "$RETENTION_JOB_EDGE_SHARED_KEY" ]]; then
+  REQUEST_HEADERS="${REQUEST_HEADERS},${RETENTION_JOB_EDGE_SHARED_KEY_HEADER_NAME}=${RETENTION_JOB_EDGE_SHARED_KEY}"
+fi
 
 if gcloud scheduler jobs describe "$JOB_NAME" --location "$LOCATION" --project "$PROJECT_ID" >/dev/null 2>&1; then
   echo "[scheduler] Updating existing job ${JOB_NAME}..."
@@ -47,7 +55,7 @@ if gcloud scheduler jobs describe "$JOB_NAME" --location "$LOCATION" --project "
     --time-zone "$TIME_ZONE" \
     --uri "$SERVICE_URL" \
     --http-method POST \
-    --headers "Content-Type=application/json" \
+    --headers "$REQUEST_HEADERS" \
     --message-body "$JOB_PAYLOAD" \
     --oidc-service-account-email "$SERVICE_ACCOUNT_EMAIL" \
     --oidc-token-audience "$SERVICE_URL"
@@ -60,7 +68,7 @@ else
     --time-zone "$TIME_ZONE" \
     --uri "$SERVICE_URL" \
     --http-method POST \
-    --headers "Content-Type=application/json" \
+    --headers "$REQUEST_HEADERS" \
     --message-body "$JOB_PAYLOAD" \
     --oidc-service-account-email "$SERVICE_ACCOUNT_EMAIL" \
     --oidc-token-audience "$SERVICE_URL"
@@ -69,3 +77,7 @@ fi
 echo "[scheduler] Completed."
 echo "[scheduler] Service account: ${SERVICE_ACCOUNT_EMAIL}"
 echo "[scheduler] URL / audience: ${SERVICE_URL}"
+echo "[scheduler] Edge marker header: ${RETENTION_JOB_EDGE_HEADER_NAME}=${RETENTION_JOB_EDGE_HEADER_VALUE}"
+if [[ -n "$RETENTION_JOB_EDGE_SHARED_KEY" ]]; then
+  echo "[scheduler] Edge shared-key header enabled: ${RETENTION_JOB_EDGE_SHARED_KEY_HEADER_NAME}"
+fi

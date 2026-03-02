@@ -8,6 +8,7 @@ import { verifyGoogleOidcToken } from '../services/googleOidc.js';
 const retentionRunSchema = z.object({
   days: z.coerce.number().int().min(1).max(3650).optional(),
 });
+const EDGE_SHARED_KEY_HEADER = 'x-skillforge-edge-key';
 
 const parseBearerToken = (authorizationHeader: string | undefined): string | null => {
   if (!authorizationHeader) {
@@ -33,6 +34,15 @@ const isTokenMatch = (candidate: string, expected: string): boolean => {
 
 const buildInternalAuthMiddleware = (deps: AppDeps) =>
   wrapAsync(async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    const expectedEdgeSharedKey = deps.env.retentionJobEdgeSharedKey;
+    if (expectedEdgeSharedKey) {
+      const providedEdgeSharedKey = req.header(EDGE_SHARED_KEY_HEADER);
+      if (!providedEdgeSharedKey || !isTokenMatch(providedEdgeSharedKey.trim(), expectedEdgeSharedKey)) {
+        res.status(401).json({ error: 'Invalid edge shared key.' });
+        return;
+      }
+    }
+
     const token = parseBearerToken(req.header('authorization'));
     if (!token) {
       res.status(401).json({ error: 'Missing bearer token.' });

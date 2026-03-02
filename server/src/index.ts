@@ -3,6 +3,7 @@ import { createApp } from './app.js';
 import { env } from './config/env.js';
 import { closeDatabase } from './db/index.js';
 import { getHealthSnapshot } from './services/health.js';
+import { initializeTelemetry, shutdownTelemetry } from './services/otel.js';
 import { closeAllSseConnections, getSseConnectionCount } from './services/sseRegistry.js';
 
 const app = createApp();
@@ -29,6 +30,7 @@ const verifyProductionDependencies = async (): Promise<void> => {
 
 const bootstrap = async (): Promise<void> => {
   try {
+    await initializeTelemetry();
     await verifyProductionDependencies();
     server.listen(env.PORT, () => {
       console.log(
@@ -42,6 +44,7 @@ const bootstrap = async (): Promise<void> => {
       );
     });
   } catch (error) {
+    await shutdownTelemetry();
     console.error(
       JSON.stringify({
         level: 'error',
@@ -98,6 +101,7 @@ const shutdown = async (signal: NodeJS.Signals): Promise<void> => {
       });
     });
     await closeDatabase();
+    await shutdownTelemetry();
 
     clearTimeout(forceExitTimer);
     console.log(
@@ -109,6 +113,7 @@ const shutdown = async (signal: NodeJS.Signals): Promise<void> => {
     );
     process.exit(0);
   } catch (error) {
+    await shutdownTelemetry();
     clearTimeout(forceExitTimer);
     console.error(
       JSON.stringify({

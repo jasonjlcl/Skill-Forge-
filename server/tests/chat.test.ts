@@ -174,6 +174,111 @@ describe('chat stream', () => {
     expect(meta?.sources[0]?.excerpt).toContain('lockout-tagout');
   });
 
+  it('uses provider-native streaming when the llm client exposes streamAssistance', async () => {
+    const store = new InMemoryStore();
+    const vectorStore = {
+      upsert: async () => {},
+      query: async () => [
+        {
+          id: 'chunk-stream-1',
+          module: 'Safety Basics',
+          source: 'docs/safety.md',
+          text: 'Wear PPE and follow lockout-tagout procedures.',
+          score: 0.91,
+          metadata: {},
+        },
+      ],
+    };
+
+    const generateAssistanceMock = jest.fn(async () => ({
+      answer: 'This fallback should not be used when native streaming is available.',
+    }));
+    const streamAssistanceMock = jest.fn(async (_input, onToken) => {
+      await onToken('1) Verify PPE first. ');
+      await onToken('Why: Native stream path is active.');
+      return { answer: '1) Verify PPE first. Why: Native stream path is active.' };
+    });
+
+    const llm: LlmClient = {
+      generateAssistance: generateAssistanceMock,
+      streamAssistance: streamAssistanceMock,
+      generateQuiz: async (): Promise<QuizQuestionDraft[]> => [],
+      explainWhy: async () => 'Reasoning based on SOP context.',
+    };
+
+    const app = createApp({
+      store,
+      llm,
+      vectorStore,
+      env: {
+        NODE_ENV: 'test',
+        PORT: 4000,
+        DATABASE_URL: undefined,
+        GEMINI_API_KEY: undefined,
+        OPENAI_API_KEY: undefined,
+        JWT_SECRET: 'test-secret-with-length',
+        RATE_LIMIT_MAX: 1000,
+        AUTH_RATE_LIMIT_MAX: 1000,
+        LOGIN_MAX_ATTEMPTS: 5,
+        LOGIN_LOCKOUT_MINUTES: 15,
+        authRateLimitMax: 1000,
+        loginMaxAttempts: 5,
+        loginLockoutMinutes: 15,
+        REQUEST_BODY_LIMIT: '2mb',
+        CLIENT_URL: 'http://localhost:5173',
+        CHROMA_URL: undefined,
+        CHROMA_COLLECTION: 'test_collection',
+        COOKIE_SECURE: 'false',
+        cookieSecure: false,
+        ragTopK: 3,
+        ragMinScore: 0.2,
+        ragMaxContextChars: 1500,
+        ragRequireContext: true,
+        streamRequestTtlSeconds: 120,
+      },
+    });
+
+    const register = await request(app)
+      .post('/auth/register')
+      .send({ email: 'stream-native@example.com', password: 'strong-pass-123', language: 'en' })
+      .expect(201);
+
+    const setCookie = normalizeSetCookie(register.headers['set-cookie']);
+    const cookieHeader = toCookieHeader(setCookie);
+    const csrfToken = extractCookieValue(setCookie, 'csrf_token');
+    expect(csrfToken).toBeTruthy();
+
+    const streamStart = await request(app)
+      .post('/chat/stream/start')
+      .set('Cookie', cookieHeader)
+      .set('x-csrf-token', csrfToken as string)
+      .send({
+        message: 'What checks should I run before servicing?',
+        module: 'Safety Basics',
+      })
+      .expect(201);
+
+    const response = await request(app)
+      .get('/chat/stream')
+      .query({ stream_id: streamStart.body.streamId })
+      .set('Cookie', cookieHeader)
+      .expect(200);
+
+    expect(response.headers['content-type']).toContain('text/event-stream');
+    expect(streamAssistanceMock).toHaveBeenCalledTimes(1);
+    expect(generateAssistanceMock).not.toHaveBeenCalled();
+
+    const events = parseSseEvents(response.text ?? '');
+    const tokenPayloads = events
+      .filter((entry) => entry.event === 'token')
+      .map((entry) => entry.data as { token?: string });
+    expect(tokenPayloads.length).toBeGreaterThan(0);
+    expect(tokenPayloads.some((entry) => (entry.token ?? '').includes('Verify PPE'))).toBe(true);
+
+    const done = events.find((entry) => entry.event === 'done')?.data as { answer?: string } | undefined;
+    expect(done?.answer).toContain('Native stream path is active');
+  });
+
   it('returns 500 JSON when an async stream handler throws and keeps serving requests', async () => {
     const store = new InMemoryStore();
     const vectorStore = {

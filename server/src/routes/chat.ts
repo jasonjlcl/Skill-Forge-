@@ -5,6 +5,7 @@ import type { AppDeps } from '../domain/deps.js';
 import { requireAuth } from '../middleware/auth.js';
 import { wrapAsync } from '../middleware/async.js';
 import { requireCsrf } from '../middleware/csrf.js';
+import { LlmStreamAbortError } from '../services/gemini.js';
 import { detectLanguage } from '../services/language.js';
 import {
   getSafetyPolicyVersion,
@@ -199,31 +200,19 @@ export const createChatRouter = (deps: AppDeps): Router => {
       });
       const safeContextChunks = sanitizeRetrievedContext(contextChunks);
 
-      const completion = await deps.llm.generateAssistance({
+      const llmInput = {
         question: message,
         language: responseLanguage,
         skillLevel: req.user.skillLevel,
         module: effectiveModule,
         contextChunks: safeContextChunks,
-      });
-
-      const moderatedAnswer = moderateAssistantOutput({
-        answer: completion.answer,
-        module: effectiveModule,
-      });
-
-      await deps.store.createMessage({
-        sessionId: session.id,
-        role: 'assistant',
-        content: moderatedAnswer.text,
-      });
-
-      await deps.store.upsertModuleProgress({
-        userId: req.user.id,
-        module: effectiveModule,
-        timeDeltaSeconds: Math.max(5, Math.floor(timeSeconds ?? 15)),
-        completed: false,
-      });
+      };
+      const supportsNativeStreaming = typeof deps.llm.streamAssistance === 'function';
+      let generatedAnswer = '';
+      if (!supportsNativeStreaming) {
+        const completion = await deps.llm.generateAssistance(llmInput);
+        generatedAnswer = completion.answer;
+      }
 
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache');
@@ -258,16 +247,70 @@ export const createChatRouter = (deps: AppDeps): Router => {
         })),
       });
 
-      const tokens = moderatedAnswer.text.split(/(\s+)/);
-      for (const token of tokens) {
+      let streamedAnswer = '';
+      const emitProviderToken = async (token: string): Promise<void> => {
         if (closed) {
-          return;
+          throw new LlmStreamAbortError('SSE connection closed by client');
         }
         if (!token) {
-          continue;
+          return;
+        }
+
+        const candidate = `${streamedAnswer}${token}`;
+        const previewModeration = moderateAssistantOutput({
+          answer: candidate,
+          module: effectiveModule,
+        });
+        streamedAnswer = candidate;
+        if (previewModeration.decision !== 'allow') {
+          // Stop forwarding suspicious content immediately; final safe text is sent in `done`.
+          return;
         }
         writeSse(res, 'token', { token });
-        await sleep(20);
+      };
+
+      if (supportsNativeStreaming) {
+        try {
+          const completion = await deps.llm.streamAssistance!(llmInput, emitProviderToken);
+          generatedAnswer = streamedAnswer || completion.answer;
+        } catch (error) {
+          if (error instanceof LlmStreamAbortError) {
+            return;
+          }
+          throw error;
+        }
+      }
+
+      const moderatedAnswer = moderateAssistantOutput({
+        answer: generatedAnswer,
+        module: effectiveModule,
+      });
+
+      await deps.store.createMessage({
+        sessionId: session.id,
+        role: 'assistant',
+        content: moderatedAnswer.text,
+      });
+
+      await deps.store.upsertModuleProgress({
+        userId: req.user.id,
+        module: effectiveModule,
+        timeDeltaSeconds: Math.max(5, Math.floor(timeSeconds ?? 15)),
+        completed: false,
+      });
+
+      if (!supportsNativeStreaming) {
+        const tokens = moderatedAnswer.text.split(/(\s+)/);
+        for (const token of tokens) {
+          if (closed) {
+            return;
+          }
+          if (!token) {
+            continue;
+          }
+          writeSse(res, 'token', { token });
+          await sleep(20);
+        }
       }
 
       if (closed) {

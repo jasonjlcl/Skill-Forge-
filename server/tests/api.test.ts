@@ -66,7 +66,7 @@ const fakeLlm: LlmClient = {
   },
 };
 
-const buildTestApp = () => {
+const buildTestApp = (envOverrides: Partial<NonNullable<AppOverrides['env']>> = {}) => {
   const store = new InMemoryStore();
   const vectorStore = new InMemoryVectorStore();
 
@@ -99,6 +99,7 @@ const buildTestApp = () => {
       CHROMA_COLLECTION: 'test_collection',
       COOKIE_SECURE: 'false',
       cookieSecure: false,
+      ...envOverrides,
     },
   };
 
@@ -360,6 +361,36 @@ describe('API', () => {
     expect(response.body.retentionDays).toBe(30);
     expect(response.body.purged.sessionsDeleted).toBe(1);
     expect(response.body.purged.messagesDeleted).toBe(1);
+  });
+
+  it('requires edge shared key when internal retention edge hardening is enabled', async () => {
+    const { app } = buildTestApp({
+      RETENTION_JOB_EDGE_SHARED_KEY: 'edge-shared-key',
+      retentionJobEdgeSharedKey: 'edge-shared-key',
+    });
+
+    await request(app)
+      .post('/api/internal/retention/run')
+      .set('Authorization', 'Bearer test-retention-token')
+      .send({ days: 30 })
+      .expect(401);
+  });
+
+  it('accepts internal retention when edge shared key matches', async () => {
+    const { app } = buildTestApp({
+      RETENTION_JOB_EDGE_SHARED_KEY: 'edge-shared-key',
+      retentionJobEdgeSharedKey: 'edge-shared-key',
+    });
+
+    const response = await request(app)
+      .post('/api/internal/retention/run')
+      .set('Authorization', 'Bearer test-retention-token')
+      .set('x-skillforge-edge-key', 'edge-shared-key')
+      .send({ days: 30 })
+      .expect(200);
+
+    expect(response.body.retentionDays).toBe(30);
+    expect(response.body.principal).toBe('retention-job-token');
   });
 
   it('rejects internal retention without bearer token', async () => {

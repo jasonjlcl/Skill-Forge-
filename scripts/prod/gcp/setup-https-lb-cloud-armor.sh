@@ -7,6 +7,14 @@ DOMAIN_NAME="${3:?Usage: setup-https-lb-cloud-armor.sh <instance-name> <zone> <d
 PREFIX="${4:-skillforge-prod}"
 TARGET_TAG="${5:-skillforge-web}"
 
+RETENTION_ALLOW_PRIORITY="${RETENTION_ALLOW_PRIORITY:-850}"
+RETENTION_DENY_PRIORITY="${RETENTION_DENY_PRIORITY:-851}"
+RETENTION_JOB_ALLOWED_SOURCE_RANGES="${RETENTION_JOB_ALLOWED_SOURCE_RANGES:-}"
+RETENTION_JOB_EDGE_HEADER_NAME="${RETENTION_JOB_EDGE_HEADER_NAME:-X-Skillforge-Internal-Job}"
+RETENTION_JOB_EDGE_HEADER_VALUE="${RETENTION_JOB_EDGE_HEADER_VALUE:-retention}"
+RETENTION_JOB_EDGE_SHARED_KEY_HEADER_NAME="${RETENTION_JOB_EDGE_SHARED_KEY_HEADER_NAME:-X-Skillforge-Edge-Key}"
+RETENTION_JOB_EDGE_SHARED_KEY="${RETENTION_JOB_EDGE_SHARED_KEY:-}"
+
 PROJECT_ID="$(gcloud config get-value project)"
 NETWORK_NAME="default"
 
@@ -20,6 +28,16 @@ SSL_CERT="${PREFIX}-cert"
 GLOBAL_IP="${PREFIX}-ip"
 FORWARDING_RULE="${PREFIX}-https-fr"
 FIREWALL_RULE="${PREFIX}-allow-hc"
+
+if [[ "$RETENTION_JOB_EDGE_HEADER_NAME" == *"'"* || "$RETENTION_JOB_EDGE_HEADER_VALUE" == *"'"* ]]; then
+  echo "[lb] RETENTION_JOB_EDGE_HEADER_NAME/RETENTION_JOB_EDGE_HEADER_VALUE cannot contain single quotes."
+  exit 1
+fi
+
+if [[ "$RETENTION_JOB_EDGE_SHARED_KEY_HEADER_NAME" == *"'"* || "$RETENTION_JOB_EDGE_SHARED_KEY" == *"'"* ]]; then
+  echo "[lb] RETENTION_JOB_EDGE_SHARED_KEY_HEADER_NAME/RETENTION_JOB_EDGE_SHARED_KEY cannot contain single quotes."
+  exit 1
+fi
 
 echo "[lb] Enabling required APIs..."
 gcloud services enable compute.googleapis.com certificatemanager.googleapis.com --project "$PROJECT_ID" >/dev/null
@@ -98,6 +116,70 @@ if ! gcloud compute security-policies describe "$SECURITY_POLICY" --project "$PR
     --description "Skill Forge WAF baseline" >/dev/null
 fi
 
+retention_header_name_lc="${RETENTION_JOB_EDGE_HEADER_NAME,,}"
+retention_shared_header_name_lc="${RETENTION_JOB_EDGE_SHARED_KEY_HEADER_NAME,,}"
+retention_path_expr="(request.path.matches('^/api/internal/retention/run/?$') || request.path.matches('^/internal/retention/run/?$'))"
+retention_marker_expr="has(request.headers['${retention_header_name_lc}']) && request.headers['${retention_header_name_lc}'] == '${RETENTION_JOB_EDGE_HEADER_VALUE}'"
+
+retention_shared_expr=""
+if [[ -n "$RETENTION_JOB_EDGE_SHARED_KEY" ]]; then
+  retention_shared_expr=" && has(request.headers['${retention_shared_header_name_lc}']) && request.headers['${retention_shared_header_name_lc}'] == '${RETENTION_JOB_EDGE_SHARED_KEY}'"
+fi
+
+retention_source_expr=""
+if [[ -n "$RETENTION_JOB_ALLOWED_SOURCE_RANGES" ]]; then
+  IFS=',' read -r -a retention_source_ranges <<< "$RETENTION_JOB_ALLOWED_SOURCE_RANGES"
+  retention_source_terms=()
+  for range in "${retention_source_ranges[@]}"; do
+    trimmed="$(echo "$range" | xargs)"
+    if [[ -n "$trimmed" ]]; then
+      retention_source_terms+=("inIpRange(origin.ip, '${trimmed}')")
+    fi
+  done
+
+  if [[ "${#retention_source_terms[@]}" -gt 0 ]]; then
+    source_joined=""
+    for term in "${retention_source_terms[@]}"; do
+      if [[ -n "$source_joined" ]]; then
+        source_joined="${source_joined} || ${term}"
+      else
+        source_joined="$term"
+      fi
+    done
+    retention_source_expr=" && (${source_joined})"
+  fi
+fi
+
+retention_allow_expr="request.method == 'POST' && ${retention_path_expr} && ${retention_marker_expr}${retention_shared_expr}${retention_source_expr}"
+retention_deny_expr="${retention_path_expr}"
+
+upsert_rule() {
+  local priority="$1"
+  local action="$2"
+  local expression="$3"
+  local description="$4"
+
+  if gcloud compute security-policies rules describe "$priority" --project "$PROJECT_ID" --security-policy "$SECURITY_POLICY" >/dev/null 2>&1; then
+    gcloud compute security-policies rules update "$priority" \
+      --project "$PROJECT_ID" \
+      --security-policy "$SECURITY_POLICY" \
+      --action "$action" \
+      --expression "$expression" \
+      --description "$description" >/dev/null
+  else
+    gcloud compute security-policies rules create "$priority" \
+      --project "$PROJECT_ID" \
+      --security-policy "$SECURITY_POLICY" \
+      --action "$action" \
+      --expression "$expression" \
+      --description "$description" >/dev/null
+  fi
+}
+
+echo "[lb] Upserting precise retention endpoint edge rules..."
+upsert_rule "$RETENTION_ALLOW_PRIORITY" "allow" "$retention_allow_expr" "Allow retention endpoint only for trusted scheduler pattern"
+upsert_rule "$RETENTION_DENY_PRIORITY" "deny-403" "$retention_deny_expr" "Deny all other retention endpoint traffic"
+
 if ! gcloud compute security-policies rules describe 1000 --project "$PROJECT_ID" --security-policy "$SECURITY_POLICY" >/dev/null 2>&1; then
   gcloud compute security-policies rules create 1000 \
     --project "$PROJECT_ID" \
@@ -166,3 +248,12 @@ echo "[lb] Completed."
 echo "[lb] Load balancer IP: ${LB_IP}"
 echo "[lb] Managed certificate status: ${CERT_STATUS}"
 echo "[lb] Point ${DOMAIN_NAME} A record to ${LB_IP} to activate managed TLS."
+echo "[lb] Retention allow rule: priority=${RETENTION_ALLOW_PRIORITY}, header ${RETENTION_JOB_EDGE_HEADER_NAME}=${RETENTION_JOB_EDGE_HEADER_VALUE}"
+if [[ -n "$RETENTION_JOB_ALLOWED_SOURCE_RANGES" ]]; then
+  echo "[lb] Retention allowed source ranges: ${RETENTION_JOB_ALLOWED_SOURCE_RANGES}"
+fi
+if [[ -n "$RETENTION_JOB_EDGE_SHARED_KEY" ]]; then
+  echo "[lb] Retention shared-key header enforced: ${RETENTION_JOB_EDGE_SHARED_KEY_HEADER_NAME}"
+else
+  echo "[lb] Retention shared-key header not set. Configure RETENTION_JOB_EDGE_SHARED_KEY for stricter edge filtering."
+fi

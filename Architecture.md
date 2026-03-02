@@ -63,6 +63,7 @@ sequenceDiagram
   - `services/safety.ts` context sanitization and output moderation.
 - Observability:
   - `services/observability.ts` central tracing/metrics helpers and periodic summary logs.
+  - `services/otel.ts` exporter bootstrap/shutdown with explicit mode strategy (`none`, `console`, `otlp`).
   - `middleware/logging.ts` request metrics + correlation-enriched request logs.
   - `routes/chat.ts` stream lifecycle metrics and session/stream correlation propagation.
 
@@ -111,7 +112,7 @@ flowchart LR
 - `GET /api/privacy/export`
 - `POST /api/privacy/retention/run`
 - `DELETE /api/privacy`
-- `POST /api/internal/retention/run` (scheduler automation endpoint with bearer/OIDC auth)
+- `POST /api/internal/retention/run` (scheduler automation endpoint with bearer/OIDC auth, optional edge shared-key header)
   - Production scheduler target uses HTTPS + OIDC (`https://skillforge.it.com/api/internal/retention/run`)
 
 ## Database Hot-Path Indexes
@@ -137,4 +138,6 @@ Migration apply flow:
 - CI promotion uses an SSH-based remote deploy script (`scripts/prod/deploy-remote.sh`), so the host provider is interchangeable.
 - GCP Compute Engine is supported as a VM target when Docker, Docker Compose, and required ports/secrets are configured.
 - Current production edge uses GCP global HTTPS load balancing with Google-managed TLS and Cloud Armor.
+- Cloud Armor retention protection is a precise rule pair: strict allow (`POST` + retention path + scheduler marker header + optional shared key/CIDR allowlist) followed by explicit deny for all other retention-path traffic.
 - Retention automation is scheduled in Cloud Scheduler with OIDC authentication to the internal retention endpoint.
+- Monitoring setup script operationalizes logs-based API metrics, SLO burn-rate alerts, and an API dashboard for on-call triage.
