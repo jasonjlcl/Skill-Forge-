@@ -4,10 +4,12 @@ const inputBase = process.argv[2] || 'https://skillforge.it.com';
 const baseUrl = inputBase.replace(/\/+$/, '');
 const password = 'Test1234!';
 const retryableStatuses = new Set([502, 503, 504]);
-const retryBaseMsRaw = Number.parseInt(process.env.AUTH_SMOKE_RETRY_BASE_MS ?? '250', 10);
-const retryBaseMs = Number.isFinite(retryBaseMsRaw) ? Math.max(50, retryBaseMsRaw) : 250;
-const maxAttemptsRaw = Number.parseInt(process.env.AUTH_SMOKE_MAX_ATTEMPTS ?? '4', 10);
-const maxAttempts = Number.isFinite(maxAttemptsRaw) ? Math.max(1, maxAttemptsRaw) : 4;
+const retryBaseMsRaw = Number.parseInt(process.env.AUTH_SMOKE_RETRY_BASE_MS ?? '1000', 10);
+const retryBaseMs = Number.isFinite(retryBaseMsRaw) ? Math.max(100, retryBaseMsRaw) : 1000;
+const retryMaxMsRaw = Number.parseInt(process.env.AUTH_SMOKE_RETRY_MAX_MS ?? '8000', 10);
+const retryMaxMs = Number.isFinite(retryMaxMsRaw) ? Math.max(retryBaseMs, retryMaxMsRaw) : 8000;
+const maxAttemptsRaw = Number.parseInt(process.env.AUTH_SMOKE_MAX_ATTEMPTS ?? '8', 10);
+const maxAttempts = Number.isFinite(maxAttemptsRaw) ? Math.max(1, maxAttemptsRaw) : 8;
 
 const cookieJar = new Map();
 
@@ -142,7 +144,7 @@ const run = async () => {
         throw error;
       }
 
-      const delayMs = retryBaseMs * Math.max(1, 2 ** (attempt - 1));
+      const delayMs = Math.min(retryMaxMs, retryBaseMs * Math.max(1, 2 ** (attempt - 1)));
       const step = typeof error?.label === 'string' ? error.label : 'request';
       console.log(
         `[auth-smoke] transient ${step} status=${status}; retrying in ${delayMs}ms`,
