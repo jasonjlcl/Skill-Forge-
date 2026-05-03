@@ -9,6 +9,7 @@ DEPLOY_REF="${DEPLOY_REF:-main}"
 ENV_FILE="${ENV_FILE:-.env.production}"
 ENABLE_HTTPS="${ENABLE_HTTPS:-false}"
 SSH_KEY_PATH="${SSH_KEY_PATH:-$HOME/.ssh/deploy_key}"
+PRUNE_DOCKER_BEFORE_DEPLOY="${PRUNE_DOCKER_BEFORE_DEPLOY:-true}"
 
 if [ ! -f "$SSH_KEY_PATH" ]; then
   echo "SSH key not found at $SSH_KEY_PATH" >&2
@@ -18,6 +19,15 @@ fi
 REMOTE_DEPLOY_SCRIPT='
 set -eu
 cd "$1"
+if [ "$5" = "true" ] && command -v docker >/dev/null 2>&1; then
+  echo "[deploy] Disk usage before Docker cleanup:"
+  df -h .
+  docker container prune -f || true
+  docker image prune -af || true
+  docker builder prune -af || true
+  echo "[deploy] Disk usage after Docker cleanup:"
+  df -h .
+fi
 git fetch --prune origin
 git checkout "$2"
 if git show-ref --verify --quiet "refs/remotes/origin/$2"; then
@@ -30,6 +40,6 @@ else
 fi
 '
 
-ssh -i "$SSH_KEY_PATH" "$SSH_USER@$SSH_HOST" sh -s -- "$DEPLOY_PATH" "$DEPLOY_REF" "$ENV_FILE" "$ENABLE_HTTPS" <<EOF
+ssh -i "$SSH_KEY_PATH" "$SSH_USER@$SSH_HOST" sh -s -- "$DEPLOY_PATH" "$DEPLOY_REF" "$ENV_FILE" "$ENABLE_HTTPS" "$PRUNE_DOCKER_BEFORE_DEPLOY" <<EOF
 $REMOTE_DEPLOY_SCRIPT
 EOF
