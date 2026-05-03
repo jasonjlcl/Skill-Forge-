@@ -32,6 +32,12 @@ export interface VectorStoreQueryInput {
   minScore?: number;
 }
 
+export const clampRetrievalTopK = (
+  requested: number | undefined,
+  fallback: number = env.ragTopK,
+  max: number = env.ragMaxTopK,
+): number => Math.min(Math.max(1, Math.floor(max)), Math.max(1, Math.floor(requested ?? fallback)));
+
 const truncateText = (text: string, maxChars: number): string => {
   if (maxChars <= 0) {
     return '';

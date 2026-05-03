@@ -231,25 +231,35 @@ const buildFallbackAssistanceAnswer = (input: AssistanceInput): string => {
   );
 };
 
+const shouldCallModelWithContext = (contextChunks: RetrievedChunk[]): boolean =>
+  !env.ragRequireContext || contextChunks.length > 0;
+
 export class GeminiLlmClient implements LlmClient {
-  private readonly gemini = env.GEMINI_API_KEY ? new GoogleGenerativeAI(env.GEMINI_API_KEY) : null;
-  private readonly openai = env.OPENAI_API_KEY ? new OpenAI({ apiKey: env.OPENAI_API_KEY }) : null;
+  private readonly gemini =
+    env.GEMINI_API_KEY && (env.llmProvider === 'auto' || env.llmProvider === 'gemini')
+      ? new GoogleGenerativeAI(env.GEMINI_API_KEY)
+      : null;
+
+  private readonly openai =
+    env.OPENAI_API_KEY && (env.llmProvider === 'auto' || env.llmProvider === 'openai')
+      ? new OpenAI({ apiKey: env.OPENAI_API_KEY })
+      : null;
 
   private async runModel(systemPrompt: string, prompt: string): Promise<string | null> {
     if (this.gemini) {
       try {
-        const model = this.gemini.getGenerativeModel({ model: 'gemini-1.5-flash' });
+        const model = this.gemini.getGenerativeModel({ model: env.geminiModel });
         const response = await withObservedSpan(
           {
             spanName: 'llm.generate.gemini',
             operation: 'llm.generate',
             attributes: {
               provider: 'gemini',
-              model: 'gemini-1.5-flash',
+              model: env.geminiModel,
             },
             metricAttributes: {
               provider: 'gemini',
-              model: 'gemini-1.5-flash',
+              model: env.geminiModel,
             },
           },
           () =>
@@ -259,6 +269,7 @@ export class GeminiLlmClient implements LlmClient {
                   model.generateContent({
                     generationConfig: {
                       maxOutputTokens: env.llmMaxOutputTokens,
+                      temperature: env.llmTemperature,
                     },
                     contents: [{ role: 'user', parts: [{ text: `${systemPrompt}\n\n${prompt}` }] }],
                   }),
@@ -295,11 +306,11 @@ export class GeminiLlmClient implements LlmClient {
             operation: 'llm.generate',
             attributes: {
               provider: 'openai',
-              model: 'gpt-4o-mini',
+              model: env.openaiChatModel,
             },
             metricAttributes: {
               provider: 'openai',
-              model: 'gpt-4o-mini',
+              model: env.openaiChatModel,
             },
           },
           () =>
@@ -307,8 +318,8 @@ export class GeminiLlmClient implements LlmClient {
               () =>
                 withTimeout(
                   openAiClient.chat.completions.create({
-                    model: 'gpt-4o-mini',
-                    temperature: 0.2,
+                    model: env.openaiChatModel,
+                    temperature: env.llmTemperature,
                     max_tokens: env.llmMaxOutputTokens,
                     messages: [
                       { role: 'system', content: systemPrompt },
@@ -349,19 +360,19 @@ export class GeminiLlmClient implements LlmClient {
   ): Promise<string | null> {
     if (this.gemini) {
       try {
-        const model = this.gemini.getGenerativeModel({ model: 'gemini-1.5-flash' });
+        const model = this.gemini.getGenerativeModel({ model: env.geminiModel });
         const response = await withObservedSpan(
           {
             spanName: 'llm.generate_stream.gemini',
             operation: 'llm.generate',
             attributes: {
               provider: 'gemini',
-              model: 'gemini-1.5-flash',
+              model: env.geminiModel,
               stream: 'true',
             },
             metricAttributes: {
               provider: 'gemini',
-              model: 'gemini-1.5-flash',
+              model: env.geminiModel,
               stream: 'true',
             },
           },
@@ -373,6 +384,7 @@ export class GeminiLlmClient implements LlmClient {
                     const streamResponse = await model.generateContentStream({
                       generationConfig: {
                         maxOutputTokens: env.llmMaxOutputTokens,
+                        temperature: env.llmTemperature,
                       },
                       contents: [{ role: 'user', parts: [{ text: `${systemPrompt}\n\n${prompt}` }] }],
                     });
@@ -424,12 +436,12 @@ export class GeminiLlmClient implements LlmClient {
             operation: 'llm.generate',
             attributes: {
               provider: 'openai',
-              model: 'gpt-4o-mini',
+              model: env.openaiChatModel,
               stream: 'true',
             },
             metricAttributes: {
               provider: 'openai',
-              model: 'gpt-4o-mini',
+              model: env.openaiChatModel,
               stream: 'true',
             },
           },
@@ -439,8 +451,8 @@ export class GeminiLlmClient implements LlmClient {
                 withTimeout(
                   (async () => {
                     const stream = await openAiClient.chat.completions.create({
-                      model: 'gpt-4o-mini',
-                      temperature: 0.2,
+                      model: env.openaiChatModel,
+                      temperature: env.llmTemperature,
                       max_tokens: env.llmMaxOutputTokens,
                       stream: true,
                       stream_options: { include_usage: true },
@@ -495,6 +507,12 @@ export class GeminiLlmClient implements LlmClient {
   }
 
   async generateAssistance(input: AssistanceInput): Promise<{ answer: string }> {
+    if (!shouldCallModelWithContext(input.contextChunks)) {
+      return {
+        answer: buildFallbackAssistanceAnswer(input),
+      };
+    }
+
     const prompts = buildAssistancePrompts(input);
     const generated = await this.runModel(prompts.systemPrompt, prompts.prompt);
     if (generated) {
@@ -510,6 +528,12 @@ export class GeminiLlmClient implements LlmClient {
     input: AssistanceInput,
     onToken: AssistanceStreamTokenHandler,
   ): Promise<{ answer: string }> {
+    if (!shouldCallModelWithContext(input.contextChunks)) {
+      const fallback = buildFallbackAssistanceAnswer(input);
+      await onToken(fallback);
+      return { answer: fallback };
+    }
+
     const prompts = buildAssistancePrompts(input);
     const generated = await this.runModelStream(prompts.systemPrompt, prompts.prompt, onToken);
     if (generated) {
@@ -546,18 +570,20 @@ export class GeminiLlmClient implements LlmClient {
       'For multiple choice, answerKey should be the option letter (A/B/C/D).',
     ].join('\n\n');
 
-    const generated = await this.runModel(systemPrompt, prompt);
-    if (generated) {
-      try {
-        const parsed = quizSchema.safeParse(JSON.parse(cleanJsonText(generated)));
-        if (parsed.success && parsed.data.length >= 3) {
-          return parsed.data.map((question) => ({
-            ...question,
-            options: question.type === 'multiple_choice' ? question.options ?? [] : undefined,
-          }));
+    if (shouldCallModelWithContext(input.contextChunks)) {
+      const generated = await this.runModel(systemPrompt, prompt);
+      if (generated) {
+        try {
+          const parsed = quizSchema.safeParse(JSON.parse(cleanJsonText(generated)));
+          if (parsed.success && parsed.data.length >= 3) {
+            return parsed.data.map((question) => ({
+              ...question,
+              options: question.type === 'multiple_choice' ? question.options ?? [] : undefined,
+            }));
+          }
+        } catch {
+          // fall through to deterministic fallback quiz
         }
-      } catch {
-        // fall through to deterministic fallback quiz
       }
     }
 
@@ -622,9 +648,11 @@ export class GeminiLlmClient implements LlmClient {
       2,
     );
 
-    const generated = await this.runModel(systemPrompt, prompt);
-    if (generated) {
-      return generated;
+    if (shouldCallModelWithContext(input.contextChunks)) {
+      const generated = await this.runModel(systemPrompt, prompt);
+      if (generated) {
+        return generated;
+      }
     }
 
     return 'The response prioritized safety and SOP compliance, then selected actions supported by the retrieved training snippets.';

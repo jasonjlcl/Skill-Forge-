@@ -1,4 +1,9 @@
-import { applyContextBudget, InMemoryVectorStore, type TrainingChunk } from '../src/services/vectorStore.js';
+import {
+  applyContextBudget,
+  clampRetrievalTopK,
+  InMemoryVectorStore,
+  type TrainingChunk,
+} from '../src/services/vectorStore.js';
 
 describe('InMemoryVectorStore', () => {
   it('returns the most relevant chunk for a query', async () => {
@@ -57,5 +62,11 @@ describe('InMemoryVectorStore', () => {
     expect(trimmed[1].text).toHaveLength(6);
     expect(trimmed[1].text.endsWith('...')).toBe(true);
     expect(trimmed.reduce((sum, chunk) => sum + chunk.text.length, 0)).toBeLessThanOrEqual(18);
+  });
+
+  it('caps requested retrieval breadth to the configured maximum', () => {
+    expect(clampRetrievalTopK(50, 4, 6)).toBe(6);
+    expect(clampRetrievalTopK(undefined, 3, 6)).toBe(3);
+    expect(clampRetrievalTopK(0, 3, 6)).toBe(1);
   });
 });

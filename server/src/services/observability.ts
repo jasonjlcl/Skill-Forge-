@@ -8,6 +8,7 @@ import {
   type Span,
   type Tracer,
 } from '@opentelemetry/api';
+import { env } from '../config/env.js';
 
 const tracerName = 'skill_forge.api';
 const tracerVersion = '1.0.0';
@@ -45,7 +46,7 @@ interface OperationAggregate {
 
 const operationAggregates = new Map<string, OperationAggregate>();
 const tokenUsageByProvider = new Map<string, number>();
-const telemetryEnabled = process.env.NODE_ENV !== 'test';
+const summaryLogsEnabled = env.NODE_ENV !== 'test' && env.observabilitySummaryLogs;
 const summaryWindowMs = 60_000;
 
 let summaryWindowStartedAt = Date.now();
@@ -66,7 +67,7 @@ streamCompletionRateGauge.addCallback((observableResult) => {
 });
 
 const ensureSummaryTimer = (): void => {
-  if (!telemetryEnabled || summaryTimer) {
+  if (!summaryLogsEnabled || summaryTimer) {
     return;
   }
 
@@ -77,7 +78,7 @@ const ensureSummaryTimer = (): void => {
 };
 
 const flushObservabilitySummary = (): void => {
-  if (!telemetryEnabled) {
+  if (!summaryLogsEnabled) {
     return;
   }
 

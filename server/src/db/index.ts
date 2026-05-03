@@ -15,7 +15,12 @@ const getOrCreatePool = (): Pool | null => {
   }
 
   if (!pool) {
-    pool = new Pool({ connectionString });
+    pool = new Pool({
+      connectionString,
+      max: env.databasePoolMax,
+      idleTimeoutMillis: env.databaseIdleTimeoutMs,
+      connectionTimeoutMillis: env.databaseConnectionTimeoutMs,
+    });
   }
 
   return pool;

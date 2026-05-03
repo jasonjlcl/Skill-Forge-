@@ -8,7 +8,7 @@ import { env as defaultEnv, type EnvConfig } from './config/env.js';
 import type { AppDeps } from './domain/deps.js';
 import { wrapAsync } from './middleware/async.js';
 import { errorHandler, notFoundHandler } from './middleware/error.js';
-import { requestLogger } from './middleware/logging.js';
+import { createRequestLogger } from './middleware/logging.js';
 import { createAuthRouter } from './routes/auth.js';
 import { createChatRouter } from './routes/chat.js';
 import { createInternalRouter } from './routes/internal.js';
@@ -85,7 +85,7 @@ export const createApp = (overrides: AppOverrides = {}) => {
     credentials: true,
   };
 
-  app.use(requestLogger);
+  app.use(createRequestLogger(env));
   app.use(cors(corsOptions));
   app.use(
     helmet({

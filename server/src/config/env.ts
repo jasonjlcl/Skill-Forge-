@@ -18,9 +18,17 @@ const envSchema = z.object({
   POSTGRES_DB: z.string().optional(),
   GEMINI_API_KEY: z.string().optional(),
   OPENAI_API_KEY: z.string().optional(),
+  LLM_PROVIDER: z.enum(['auto', 'gemini', 'openai', 'local']).default('auto'),
+  GEMINI_MODEL: z.string().default('gemini-1.5-flash'),
+  OPENAI_CHAT_MODEL: z.string().default('gpt-4o-mini'),
+  LLM_TEMPERATURE: z.coerce.number().default(0.2),
   EMBEDDING_PROVIDER: z.enum(['auto', 'openai', 'hash']).default('auto'),
   OPENAI_EMBEDDING_MODEL: z.string().default('text-embedding-3-small'),
   EMBEDDING_BATCH_SIZE: z.coerce.number().default(64),
+  EMBEDDING_CACHE_MAX_ENTRIES: z.coerce.number().default(4096),
+  DATABASE_POOL_MAX: z.coerce.number().default(10),
+  DATABASE_IDLE_TIMEOUT_MS: z.coerce.number().default(30000),
+  DATABASE_CONNECTION_TIMEOUT_MS: z.coerce.number().default(5000),
   JWT_SECRET: z.string().optional(),
   RATE_LIMIT_MAX: z.coerce.number().default(200),
   AUTH_RATE_LIMIT_MAX: z.coerce.number().default(20),
@@ -32,6 +40,7 @@ const envSchema = z.object({
   CHROMA_URL: z.string().optional(),
   CHROMA_COLLECTION: z.string().default('training_documents'),
   RAG_TOP_K: z.coerce.number().default(4),
+  RAG_MAX_TOP_K: z.coerce.number().default(6),
   RAG_MIN_SCORE: z.coerce.number().min(0).max(1).default(0.05),
   RAG_MAX_CONTEXT_CHARS: z.coerce.number().default(4000),
   RAG_REQUIRE_CONTEXT: z.enum(['true', 'false']).default('true'),
@@ -59,6 +68,8 @@ const envSchema = z.object({
   OTEL_EXPORTER_OTLP_HEADERS: z.preprocess(emptyStringToUndefined, z.string().optional()),
   OTEL_METRIC_EXPORT_INTERVAL_MS: z.coerce.number().default(60000),
   OTEL_METRIC_EXPORT_TIMEOUT_MS: z.coerce.number().default(10000),
+  LOG_HTTP_REQUESTS: z.enum(['true', 'false']).default('true'),
+  OBSERVABILITY_SUMMARY_LOGS: z.enum(['true', 'false']).default('true'),
   RETENTION_JOB_AUTH_TOKEN: z.preprocess(emptyStringToUndefined, z.string().optional()),
   RETENTION_JOB_OIDC_AUDIENCE: z.preprocess(emptyStringToUndefined, z.string().url().optional()),
   RETENTION_JOB_ALLOWED_SERVICE_ACCOUNTS: z.preprocess(emptyStringToUndefined, z.string().optional()),
@@ -122,6 +133,7 @@ const resolvedEmbeddingProvider =
       ? 'openai'
       : 'hash'
     : parsedData.EMBEDDING_PROVIDER;
+const ragMaxTopK = Math.max(1, Math.floor(parsedData.RAG_MAX_TOP_K));
 
 if (parsedData.NODE_ENV === 'production' && !builtDatabaseUrl) {
   throw new Error('DATABASE_URL (or POSTGRES_* variables) is required in production');
@@ -137,16 +149,24 @@ export const env = {
   JWT_SECRET: jwtSecret,
   POSTGRES_HOST: parsedData.POSTGRES_HOST ?? 'localhost',
   POSTGRES_PORT: parsedData.POSTGRES_PORT ?? 5432,
+  databasePoolMax: Math.max(1, Math.floor(parsedData.DATABASE_POOL_MAX)),
+  databaseIdleTimeoutMs: Math.max(1000, Math.floor(parsedData.DATABASE_IDLE_TIMEOUT_MS)),
+  databaseConnectionTimeoutMs: Math.max(1000, Math.floor(parsedData.DATABASE_CONNECTION_TIMEOUT_MS)),
   cookieSecure:
     parsedData.COOKIE_SECURE !== undefined
       ? parsedData.COOKIE_SECURE === 'true'
       : parsedData.NODE_ENV === 'production',
-  ragTopK: Math.max(1, Math.floor(parsedData.RAG_TOP_K)),
+  ragTopK: Math.min(ragMaxTopK, Math.max(1, Math.floor(parsedData.RAG_TOP_K))),
+  ragMaxTopK,
   ragMinScore: parsedData.RAG_MIN_SCORE,
   ragMaxContextChars: Math.max(600, Math.floor(parsedData.RAG_MAX_CONTEXT_CHARS)),
   ragRequireContext: parsedData.RAG_REQUIRE_CONTEXT === 'true',
   llmMaxOutputTokens: Math.max(64, Math.floor(parsedData.LLM_MAX_OUTPUT_TOKENS)),
   llmTimeoutMs: Math.max(1000, Math.floor(parsedData.LLM_TIMEOUT_MS)),
+  llmProvider: parsedData.LLM_PROVIDER,
+  geminiModel: parsedData.GEMINI_MODEL,
+  openaiChatModel: parsedData.OPENAI_CHAT_MODEL,
+  llmTemperature: Math.max(0, Math.min(2, parsedData.LLM_TEMPERATURE)),
   retryJitterRatio: Math.max(0, Math.min(1, parsedData.RETRY_JITTER_RATIO)),
   llmRetryMaxAttempts: Math.max(1, Math.floor(parsedData.LLM_RETRY_MAX_ATTEMPTS)),
   llmRetryBaseDelayMs: Math.max(0, Math.floor(parsedData.LLM_RETRY_BASE_DELAY_MS)),
@@ -178,6 +198,8 @@ export const env = {
   otelExporterOtlpHeaders: parsedData.OTEL_EXPORTER_OTLP_HEADERS,
   otelMetricExportIntervalMs: Math.max(5000, Math.floor(parsedData.OTEL_METRIC_EXPORT_INTERVAL_MS)),
   otelMetricExportTimeoutMs: Math.max(1000, Math.floor(parsedData.OTEL_METRIC_EXPORT_TIMEOUT_MS)),
+  logHttpRequests: parsedData.LOG_HTTP_REQUESTS === 'true',
+  observabilitySummaryLogs: parsedData.OBSERVABILITY_SUMMARY_LOGS === 'true',
   retentionJobAuthToken: parsedData.RETENTION_JOB_AUTH_TOKEN,
   retentionJobOidcAudience: parsedData.RETENTION_JOB_OIDC_AUDIENCE,
   retentionJobAllowedServiceAccounts: (parsedData.RETENTION_JOB_ALLOWED_SERVICE_ACCOUNTS ?? '')
@@ -188,6 +210,7 @@ export const env = {
   embeddingProvider: resolvedEmbeddingProvider,
   openaiEmbeddingModel: parsedData.OPENAI_EMBEDDING_MODEL,
   embeddingBatchSize: Math.max(1, Math.floor(parsedData.EMBEDDING_BATCH_SIZE)),
+  embeddingCacheMaxEntries: Math.max(0, Math.floor(parsedData.EMBEDDING_CACHE_MAX_ENTRIES)),
   corsOrigins: (parsedData.CORS_ORIGIN ?? parsedData.CLIENT_URL)
     .split(',')
     .map((origin) => origin.trim())

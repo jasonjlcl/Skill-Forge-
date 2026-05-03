@@ -7,6 +7,25 @@ const embeddingCache = new Map<string, number[]>();
 const openaiClient = env.OPENAI_API_KEY ? new OpenAI({ apiKey: env.OPENAI_API_KEY }) : null;
 let embeddingFallbackWarningEmitted = false;
 
+const rememberEmbedding = (text: string, vector: number[]): void => {
+  if (env.embeddingCacheMaxEntries <= 0) {
+    return;
+  }
+
+  if (embeddingCache.has(text)) {
+    embeddingCache.delete(text);
+  }
+  embeddingCache.set(text, vector);
+
+  while (embeddingCache.size > env.embeddingCacheMaxEntries) {
+    const oldest = embeddingCache.keys().next();
+    if (oldest.done) {
+      return;
+    }
+    embeddingCache.delete(oldest.value);
+  }
+};
+
 const logEmbeddingFallbackWarning = (reason: string): void => {
   if (embeddingFallbackWarningEmitted) {
     return;
@@ -131,7 +150,7 @@ export const embedTexts = async (texts: string[]): Promise<number[][]> => {
       for (let index = 0; index < batch.length; index += 1) {
         const text = batch[index];
         const vector = embeddedBatch[index];
-        embeddingCache.set(text, vector);
+        rememberEmbedding(text, vector);
         const originalIndex = missingIndexes[offset + index];
         result[originalIndex] = vector;
       }

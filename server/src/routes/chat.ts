@@ -12,6 +12,7 @@ import {
   moderateAssistantOutput,
   sanitizeRetrievedContext,
 } from '../services/safety.js';
+import { clampRetrievalTopK } from '../services/vectorStore.js';
 import {
   recordStreamAborted,
   recordStreamCompleted,
@@ -194,7 +195,7 @@ export const createChatRouter = (deps: AppDeps): Router => {
 
       const contextChunks = await deps.vectorStore.query({
         query: message,
-        topK: topK ?? deps.env.ragTopK,
+        topK: clampRetrievalTopK(topK, deps.env.ragTopK, deps.env.ragMaxTopK),
         minScore: deps.env.ragMinScore,
         module: effectiveModule,
       });
@@ -363,7 +364,7 @@ export const createChatRouter = (deps: AppDeps): Router => {
 
       const contextChunks = await deps.vectorStore.query({
         query: question,
-        topK: deps.env.ragTopK,
+        topK: clampRetrievalTopK(undefined, deps.env.ragTopK, deps.env.ragMaxTopK),
         minScore: deps.env.ragMinScore,
         module,
       });

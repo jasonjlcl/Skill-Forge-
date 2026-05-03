@@ -192,13 +192,18 @@ Use:
 Important variables:
 - `JWT_SECRET` (production requires strong secret, minimum 32 chars)
 - `CORS_ORIGIN`, `CLIENT_URL`
-- `GEMINI_API_KEY` and/or `OPENAI_API_KEY` (OpenAI key is recommended for semantic embeddings quality)
+- `GEMINI_API_KEY` and/or `OPENAI_API_KEY`
+- `LLM_PROVIDER` (`gemini` for minimum paid-provider spend, `local` to disable paid LLM calls, `auto` to allow provider fallback)
+- `GEMINI_MODEL`, `OPENAI_CHAT_MODEL`, `LLM_TEMPERATURE`
 - `DATABASE_URL` (required in production)
+- `DATABASE_POOL_MAX`, `DATABASE_IDLE_TIMEOUT_MS`, `DATABASE_CONNECTION_TIMEOUT_MS`
 - `CHROMA_URL` (required in production)
-- `EMBEDDING_PROVIDER` (`auto` recommended; uses OpenAI when key is present, otherwise hash fallback)
+- `EMBEDDING_PROVIDER` (`hash` for minimum cost, `openai` for stronger semantic retrieval, `auto` to use OpenAI when a key is present)
 - `OPENAI_EMBEDDING_MODEL` (default `text-embedding-3-small`)
-- `EMBEDDING_BATCH_SIZE`
+- `EMBEDDING_BATCH_SIZE`, `EMBEDDING_CACHE_MAX_ENTRIES`
+- `RAG_TOP_K`, `RAG_MAX_TOP_K`, `RAG_MIN_SCORE`
 - `RAG_MAX_CONTEXT_CHARS`
+- `RAG_REQUIRE_CONTEXT` (when true, skips model calls if retrieval has no context)
 - `LLM_MAX_OUTPUT_TOKENS`
 - `LLM_TIMEOUT_MS`
 - `RETRY_JITTER_RATIO`
@@ -213,11 +218,14 @@ Important variables:
 - `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` (optional per-signal override)
 - `OTEL_EXPORTER_OTLP_HEADERS` (comma-separated `key=value` pairs)
 - `OTEL_METRIC_EXPORT_INTERVAL_MS`, `OTEL_METRIC_EXPORT_TIMEOUT_MS`
+- `LOG_HTTP_REQUESTS`, `OBSERVABILITY_SUMMARY_LOGS`
 - `RETENTION_JOB_AUTH_TOKEN` (optional shared-token auth for `/api/internal/retention/run`)
 - `RETENTION_JOB_OIDC_AUDIENCE` (recommended for Cloud Scheduler OIDC auth; should be the HTTPS endpoint URL)
 - `RETENTION_JOB_ALLOWED_SERVICE_ACCOUNTS` (comma-separated allowlist for scheduler caller identities)
 - `RETENTION_JOB_EDGE_SHARED_KEY` (optional additional shared-key header check for `/api/internal/retention/run`)
 - `AUTH_SMOKE_RETRY_BASE_MS`, `AUTH_SMOKE_RETRY_MAX_MS`, `AUTH_SMOKE_MAX_ATTEMPTS` (auth smoke retry tuning for transient warmup failures in CI deploy checks)
+
+For the lowest-cost production posture, use the defaults in `.env.production.example` and see `docs/COST_MINIMIZATION.md`.
 
 ## API Routes
 
@@ -292,7 +300,7 @@ This project can be deployed to a GCP Compute Engine VM using the same workflow:
 - Use the existing `workflow_dispatch` promotion flow (`staging` -> `production`).
 - Keep production secrets in GitHub environments or a secret manager; avoid long-lived local `.env.production` storage.
 
-Operational hardening helpers (optional but recommended):
+Operational hardening helpers (optional; skip for minimum fixed cloud cost):
 - Ops/Monitoring: install and configure Ops Agent, then create uptime + CPU/memory alert policies via `scripts/prod/gcp/install-ops-agent.sh` and `scripts/prod/gcp/setup-monitoring.sh`.
 - Scheduled retention automation: expose `/api/internal/retention/run` with OIDC audience config and create a Cloud Scheduler job using `scripts/prod/gcp/setup-retention-scheduler.sh` against the HTTPS domain URL.
 - Edge security and TLS: provision global external HTTPS LB, Google-managed certificate, and Cloud Armor baseline policy via `scripts/prod/gcp/setup-https-lb-cloud-armor.sh`.

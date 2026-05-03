@@ -6,6 +6,7 @@ import { wrapAsync } from '../middleware/async.js';
 import { requireCsrf } from '../middleware/csrf.js';
 import { deriveSkillLevel } from '../services/profiling.js';
 import { evaluateQuizAnswer } from '../services/quizEvaluation.js';
+import { clampRetrievalTopK } from '../services/vectorStore.js';
 
 const startQuizSchema = z.object({
   module: z.string().optional(),
@@ -36,7 +37,7 @@ export const createQuizRouter = (deps: AppDeps): Router => {
       const topic = parsed.data.module || parsed.data.topic || 'General Onboarding';
       const contextChunks = await deps.vectorStore.query({
         query: `${topic} standard operating procedures`,
-        topK: Math.max(3, deps.env.ragTopK),
+        topK: clampRetrievalTopK(Math.max(3, deps.env.ragTopK), deps.env.ragTopK, deps.env.ragMaxTopK),
         minScore: deps.env.ragMinScore,
         module: topic,
       });

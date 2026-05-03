@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { NextFunction, Request, Response } from 'express';
+import { env as defaultEnv, type EnvConfig } from '../config/env.js';
 import { getRequestCorrelation, recordOperation } from '../services/observability.js';
 
 const toMilliseconds = (startNs: bigint): number => {
@@ -12,7 +13,9 @@ const sanitizePath = (url: string): string => {
   return path || '/';
 };
 
-export const requestLogger = (req: Request, res: Response, next: NextFunction): void => {
+export const createRequestLogger =
+  (config: Pick<EnvConfig, 'logHttpRequests'> = defaultEnv) =>
+  (req: Request, res: Response, next: NextFunction): void => {
   const startedAt = process.hrtime.bigint();
   const requestId = req.get('x-request-id') ?? randomUUID();
   const path = sanitizePath(req.originalUrl);
@@ -31,6 +34,10 @@ export const requestLogger = (req: Request, res: Response, next: NextFunction): 
         statusCode: res.statusCode,
       },
     });
+
+    if (!config.logHttpRequests) {
+      return;
+    }
 
     const log = {
       level: 'info',
@@ -52,3 +59,5 @@ export const requestLogger = (req: Request, res: Response, next: NextFunction): 
 
   next();
 };
+
+export const requestLogger = createRequestLogger();
